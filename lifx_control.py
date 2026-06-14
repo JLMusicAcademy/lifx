@@ -263,6 +263,29 @@ def get_state(ip=None):
 
 # --- Argument helpers -------------------------------------------------------
 
+def find_by_label(label, timeout=3.0):
+    """Find a bulb's IP by its label/name (as set in the LIFX app)."""
+    target = label.strip().lower()
+    for ip, _mac in discover(timeout):
+        state = get_state(ip)
+        if state and state["label"].strip().lower() == target:
+            return ip
+    return None
+
+
+def resolve_target(args):
+    """Resolve which bulb to talk to: --ip wins, then --label, else broadcast."""
+    if args.ip:
+        return args.ip
+    if args.label:
+        ip = find_by_label(args.label)
+        if not ip:
+            sys.exit(f"No bulb found with label '{args.label}'. "
+                     f"Run `discover` to see available bulbs.")
+        return ip
+    return None  # broadcast to all bulbs
+
+
 def resolve_color(args):
     """Resolve hue/saturation from --name or explicit --hue/--saturation."""
     if args.name:
@@ -282,7 +305,8 @@ def main(argv=None):
         description="Control a LIFX bulb over the LAN (UDP).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__)
-    parser.add_argument("--ip", help="Target bulb IP (default: broadcast to all)")
+    parser.add_argument("--ip", help="Target one bulb by IP (default: broadcast to all)")
+    parser.add_argument("--label", help="Target one bulb by its name/label (from the LIFX app)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     def add_color_args(p, default_bright=100):
@@ -327,7 +351,6 @@ def main(argv=None):
     p_breathe.add_argument("--cycles", type=float, default=5, help="Number of cycles")
 
     args = parser.parse_args(argv)
-    ip = args.ip
 
     if args.command == "discover":
         bulbs = discover()
@@ -337,9 +360,16 @@ def main(argv=None):
             return
         print(f"Found {len(bulbs)} bulb(s):")
         for bulb_ip, mac in bulbs:
-            print(f"  {bulb_ip}  (MAC {mac})")
+            # Read each bulb's label so the user knows what to pass to --label.
+            state = get_state(bulb_ip)
+            label = f'"{state["label"]}"' if state and state["label"] else "?"
+            print(f"  {bulb_ip}  {label:24} (MAC {mac})")
+        return
 
-    elif args.command == "state":
+    # All other commands target a single bulb (--ip/--label) or broadcast.
+    ip = resolve_target(args)
+
+    if args.command == "state":
         state = get_state(ip)
         if not state:
             print("No response from bulb. Try `discover` and pass --ip.")

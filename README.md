@@ -39,11 +39,24 @@ python3 lifx_control.py breathe --name green --cycles 5 --period 2
 python3 lifx_control.py state
 ```
 
-By default every command is **broadcast** to all LIFX bulbs on the LAN. To
-target one bulb, pass its address (put `--ip` before the subcommand):
+By default every command is **broadcast** to all LIFX bulbs on the LAN — so
+`on`, `color`, etc. change *every* bulb at once. To target one bulb, pass
+either its IP or its label/name (put the flag *before* the subcommand):
 
 ```bash
+# By IP (fastest; find it with `discover`)
 python3 lifx_control.py --ip 192.168.1.50 color --name purple --duration 2
+
+# By the name you gave it in the LIFX app
+python3 lifx_control.py --label "Kitchen" on
+```
+
+`discover` prints each bulb's IP and label so you know what to pass:
+
+```
+Found 2 bulb(s):
+  192.168.1.50  "Kitchen"               (MAC d0:73:d5:11:22:33)
+  192.168.1.51  "Living Room"           (MAC d0:73:d5:44:55:66)
 ```
 
 ## Commands
