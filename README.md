@@ -81,20 +81,49 @@ Found 2 bulb(s):
 
 The script can present itself as an **Art-Net DMX node** so QLab's Light
 workspace drives your bulbs natively — with the RGB(A) color wheel, intensity,
-and fade cues. It discovers every LIFX bulb on the network and maps each to a
-DMX address. Each bulb is a **5-channel fixture**:
+fade cues, **and the bulbs' own effects** (breathe, pulse, strobe, rainbow,
+etc.). It discovers every LIFX bulb on the network and maps each to a DMX
+address. Each bulb is an **8-channel fixture**:
 
-| Offset | Channel   |
-|--------|-----------|
-| +0     | Red       |
-| +1     | Green     |
-| +2     | Blue      |
-| +3     | Amber     |
-| +4     | Intensity (master dimmer) |
+| Offset | Channel   | Notes |
+|--------|-----------|-------|
+| +0     | Red       | color |
+| +1     | Green     | color |
+| +2     | Blue      | color |
+| +3     | Amber     | color (folded into the mix at hue ~45 deg) |
+| +4     | Intensity | master dimmer |
+| +5     | Effect / Mode | ranged selector (see table below) |
+| +6     | Effect Speed  | period/rate for the selected effect (slow -> fast) |
+| +7     | Strobe        | dedicated overlay: 0 = off, 1-255 = slow -> fast |
 
-At 5 channels each, ~102 bulbs fit in one 512-channel universe; beyond that the
+At 8 channels each, 64 bulbs fit in one 512-channel universe; beyond that the
 mapping rolls over into additional universes automatically. There's no hard
 limit on bulb count.
+
+### Effect / Mode channel (ch+5)
+
+| DMX value | Mode | How it runs |
+|-----------|------|-------------|
+| 0-9     | Static (steady color) | `SetColor` |
+| 10-39   | Breathe | native firmware (SINE on brightness) |
+| 40-69   | Pulse / blink | native firmware (PULSE on brightness) |
+| 70-99   | Triangle | native firmware |
+| 100-129 | Saw | native firmware |
+| 130-169 | Color pulse | native firmware (pulses color <-> its complement) |
+| 170-209 | Rainbow cycle | script-generated hue sweep |
+| 210-239 | Color loop | script-generated stepped palette |
+| 240-255 | Candle flicker | script-generated warm flicker |
+
+**Native vs script effects matters for traffic.** Breathe / pulse / triangle /
+saw / color-pulse / strobe run on the **bulb's own firmware** — the script just
+arms them, so they cost almost no network traffic no matter how many bulbs.
+Rainbow / color-loop / candle have **no single-bulb firmware equivalent**, so
+the script animates them by streaming `SetColor` at the rate cap — fine for a
+handful of bulbs, heavier with many running at once.
+
+The **Strobe** channel (ch+7) is an independent overlay: any non-zero value
+strobes the current color and takes priority over the Effect channel.
+`Effect Speed` (ch+6) sets the rate for whichever effect is selected.
 
 ### Quick start (auto-discover & assign)
 
@@ -133,12 +162,13 @@ changes. Use `--rediscover 30` to re-resolve IPs every 30s while listening.
 1. In QLab, open **Settings -> Light** (or the Light patch) and add a network
    DMX (Art-Net) output pointed at the IP of the machine running this script,
    using the universe(s) shown in the fixture map.
-2. Patch a generic **RGBA + intensity (5-channel)** fixture at each DMX address
-   the script printed.
-3. Use Light cues as normal — the color wheel and fade sliders now drive the
-   bulbs. QLab streams the fade frame-by-frame; the script rate-limits to
-   `--max-hz` (default 20/s per bulb) so Wi-Fi keeps up, and uses a short
-   `--smooth` transition so fades look continuous.
+2. Patch a generic **8-channel** fixture (R, G, B, Amber, Intensity, Mode,
+   Speed, Strobe) at each DMX address the script printed.
+3. Use Light cues as normal — the color wheel and fade sliders drive the bulbs.
+   QLab streams the fade frame-by-frame; the script rate-limits to `--max-hz`
+   (default 20/s per bulb) so Wi-Fi keeps up, and uses a short `--smooth`
+   transition so fades look continuous. Set the Mode/Speed/Strobe channels
+   (e.g. as fixed levels in a Light cue) to trigger effects.
 
 ### `listen` options
 
