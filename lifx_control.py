@@ -161,19 +161,32 @@ def send(packet, ip=None):
         sock.close()
 
 
-def discover(timeout=2.0):
-    """Broadcast a GetService and collect replies. Returns list of (ip, mac)."""
-    sock = make_socket(timeout)
+def discover(timeout=3.0, attempts=3):
+    """Discover LIFX bulbs and return a sorted list of (ip, mac).
+
+    UDP is lossy, so a single broadcast can miss a bulb (or its reply can be
+    dropped). We re-broadcast a few times across the listen window and poll
+    continuously with a short socket timeout, rather than giving up the moment
+    the network goes quiet. This makes multi-bulb discovery reliable.
+    """
+    sock = make_socket(0.3)  # short timeout so we keep polling until the deadline
     found = {}
+    probe = build_packet(MSG_GET_SERVICE, res_required=True)
     try:
-        sock.sendto(build_packet(MSG_GET_SERVICE, res_required=True),
-                    (BROADCAST_ADDR, LIFX_PORT))
         deadline = time.time() + timeout
+        next_probe = 0.0
+        sent = 0
         while time.time() < deadline:
+            # Spread `attempts` broadcasts evenly over the first ~half window.
+            now = time.time()
+            if sent < attempts and now >= next_probe:
+                sock.sendto(probe, (BROADCAST_ADDR, LIFX_PORT))
+                sent += 1
+                next_probe = now + (timeout / 2) / attempts
             try:
                 data, addr = sock.recvfrom(1024)
             except socket.timeout:
-                break
+                continue
             msg_type, _, target = parse_header(data)
             if msg_type == MSG_STATE_SERVICE:
                 mac = ":".join(f"{b:02x}" for b in struct.pack("<Q", target)[:6])
