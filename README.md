@@ -77,6 +77,83 @@ Found 2 bulb(s):
 `red`, `orange`, `yellow`, `green`, `cyan`, `blue`, `purple`, `magenta`,
 `pink`, `white`.
 
+## QLab integration (Art-Net DMX)
+
+The script can present itself as an **Art-Net DMX node** so QLab's Light
+workspace drives your bulbs natively — with the RGB(A) color wheel, intensity,
+and fade cues. It discovers every LIFX bulb on the network and maps each to a
+DMX address. Each bulb is a **5-channel fixture**:
+
+| Offset | Channel   |
+|--------|-----------|
+| +0     | Red       |
+| +1     | Green     |
+| +2     | Blue      |
+| +3     | Amber     |
+| +4     | Intensity (master dimmer) |
+
+At 5 channels each, ~102 bulbs fit in one 512-channel universe; beyond that the
+mapping rolls over into additional universes automatically. There's no hard
+limit on bulb count.
+
+### Quick start (auto-discover & assign)
+
+```bash
+# Discovers bulbs, assigns DMX addresses, and starts listening for Art-Net.
+python3 lifx_control.py listen
+```
+
+It prints the fixture map it built, e.g.:
+
+```
+DMX fixture map (5ch each: R, G, B, Amber, Intensity):
+  U0   addr   1  "Kitchen"               -> 192.168.1.50
+  U0   addr   6  "Living Room"           -> 192.168.1.51
+
+Art-Net listener on 0.0.0.0:6454  (2 fixture(s) across 1 universe(s))
+Rate limit: 20 updates/s per bulb. Press Ctrl-C to stop.
+```
+
+### Stable patch (recommended for many bulbs)
+
+Auto-assign ordering can shift if bulbs come and go. For a fixed, reproducible
+patch, generate a fixture map once and edit it to taste:
+
+```bash
+python3 lifx_control.py dmxmap --out fixtures.json   # writes an editable map
+# ...edit fixtures.json: set each bulb's universe/address as you like...
+python3 lifx_control.py listen --map fixtures.json
+```
+
+The map is keyed by each bulb's **MAC address**, so the patch survives DHCP IP
+changes. Use `--rediscover 30` to re-resolve IPs every 30s while listening.
+
+### Configuring QLab
+
+1. In QLab, open **Settings -> Light** (or the Light patch) and add a network
+   DMX (Art-Net) output pointed at the IP of the machine running this script,
+   using the universe(s) shown in the fixture map.
+2. Patch a generic **RGBA + intensity (5-channel)** fixture at each DMX address
+   the script printed.
+3. Use Light cues as normal — the color wheel and fade sliders now drive the
+   bulbs. QLab streams the fade frame-by-frame; the script rate-limits to
+   `--max-hz` (default 20/s per bulb) so Wi-Fi keeps up, and uses a short
+   `--smooth` transition so fades look continuous.
+
+### `listen` options
+
+| Option            | Default | Purpose                                            |
+|-------------------|---------|----------------------------------------------------|
+| `--map FILE`      | (auto)  | Use a saved fixture map instead of auto-discovery  |
+| `--universe N`    | 0       | Base universe for auto-assign                      |
+| `--address N`     | 1       | Base DMX address for auto-assign                   |
+| `--kelvin N`      | 3500    | White temperature when color is desaturated        |
+| `--max-hz N`      | 20      | Max LIFX updates/sec per bulb (rate limit)         |
+| `--smooth S`      | 0.12    | LIFX transition time per update, seconds           |
+| `--rediscover S`  | 0 (off) | Re-resolve bulb IPs every S seconds                |
+| `--no-poll-reply` | off     | Don't answer ArtPoll node discovery                |
+| `--verbose`       | off     | Print each DMX -> HSBK update                       |
+
 ## Value ranges
 
 - **hue**: 0–360 degrees

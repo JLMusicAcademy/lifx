@@ -41,6 +41,9 @@ single bulb with --ip 192.168.1.50 (find it with `discover`).
 """
 
 import argparse
+import colorsys
+import json
+import select
 import socket
 import struct
 import sys
@@ -261,6 +264,210 @@ def get_state(ip=None):
     }
 
 
+# --- Art-Net DMX listener ---------------------------------------------------
+#
+# QLab's Light workspace outputs DMX over Art-Net (UDP port 6454). We listen
+# for those packets and treat each LIFX bulb as a 5-channel fixture:
+#
+#     ch+0 Red   ch+1 Green   ch+2 Blue   ch+3 Amber   ch+4 Intensity
+#
+# That lets QLab drive the bulbs with its native color wheel and fade cues.
+# Many bulbs are supported: each gets its own DMX start address (and rolls
+# over into additional universes once a 512-channel universe fills up).
+
+ARTNET_ID = b"Art-Net\x00"
+ARTNET_PORT = 6454
+OP_POLL = 0x2000
+OP_POLL_REPLY = 0x2100
+OP_DMX = 0x5000
+CHANNELS_PER_FIXTURE = 5  # R, G, B, Amber, Intensity
+
+
+def rgba_to_hsbk(r, g, b, a, intensity, kelvin):
+    """Convert DMX RGBA + master intensity (each 0-255) to LIFX HSBK.
+
+    Amber is folded into the red/green mix (amber ~ hue 45 deg), then we take
+    HSV and scale brightness by the intensity channel (a master dimmer).
+    """
+    af = a / 255.0
+    rf = min(1.0, r / 255.0 + af)
+    gf = min(1.0, g / 255.0 + 0.75 * af)  # amber ~ RGB(255,191,0) -> hue 45 deg
+    bf = b / 255.0
+    h, s, v = colorsys.rgb_to_hsv(rf, gf, bf)
+    return h * 360.0, s * 100.0, v * (intensity / 255.0) * 100.0, kelvin
+
+
+def discover_bulbs(timeout=3.0):
+    """Discover bulbs and return a list of {ip, mac, label} dicts."""
+    bulbs = []
+    for ip, mac in discover(timeout):
+        state = get_state(ip)
+        bulbs.append({"ip": ip, "mac": mac,
+                      "label": state["label"] if state else ""})
+    return bulbs
+
+
+def auto_assign(bulbs, base_universe=0, base_address=1):
+    """Assign each bulb a DMX universe/address, packing fixtures sequentially.
+
+    Rolls over to the next universe when a 512-channel universe is full.
+    Ordering is deterministic (by label then IP) so the patch is repeatable.
+    """
+    fixtures = []
+    universe, address = base_universe, base_address
+    for bulb in sorted(bulbs, key=lambda b: (b.get("label") or "", b["ip"])):
+        if address + CHANNELS_PER_FIXTURE - 1 > 512:
+            universe += 1
+            address = 1
+        fixtures.append({**bulb, "universe": universe, "address": address})
+        address += CHANNELS_PER_FIXTURE
+    return fixtures
+
+
+def save_map(path, fixtures):
+    data = {
+        "channels_per_fixture": CHANNELS_PER_FIXTURE,
+        "fixtures": [{"label": f.get("label", ""), "ip": f.get("ip", ""),
+                      "mac": f.get("mac", ""), "universe": f["universe"],
+                      "address": f["address"]} for f in fixtures],
+    }
+    with open(path, "w") as fh:
+        json.dump(data, fh, indent=2)
+
+
+def load_map(path):
+    with open(path) as fh:
+        return json.load(fh)["fixtures"]
+
+
+def refresh_ips(fixtures, timeout=2.0):
+    """Re-resolve each fixture's live IP by MAC (handles DHCP changes)."""
+    by_mac = {mac: ip for ip, mac in discover(timeout)}
+    for f in fixtures:
+        f["live_ip"] = by_mac.get(f.get("mac"), f.get("ip"))
+    return fixtures
+
+
+def print_fixture_table(fixtures):
+    print("DMX fixture map (5ch each: R, G, B, Amber, Intensity):")
+    for f in fixtures:
+        name = f.get("label") or "?"
+        print(f"  U{f['universe']:<3} addr {f['address']:>3}  {name:24} "
+              f"-> {f.get('live_ip') or f.get('ip')}")
+
+
+def local_ip():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("8.8.8.8", 80))
+        return sock.getsockname()[0]
+    except OSError:
+        return "0.0.0.0"
+    finally:
+        sock.close()
+
+
+def build_artpoll_reply(node_ip, universe):
+    """Minimal ArtPollReply so the bridge shows up as a node to Art-Net tools."""
+    pkt = bytearray(239)
+    pkt[0:8] = ARTNET_ID
+    struct.pack_into("<H", pkt, 8, OP_POLL_REPLY)
+    try:
+        pkt[10:14] = bytes(int(o) for o in node_ip.split("."))
+    except ValueError:
+        pass
+    struct.pack_into("<H", pkt, 14, ARTNET_PORT)  # port (low byte first)
+    pkt[17] = 14                                    # firmware version low
+    pkt[18] = (universe >> 8) & 0x7f                # NetSwitch
+    pkt[19] = (universe >> 4) & 0x0f                # SubSwitch
+    short, long_ = b"LIFX-LAN", b"LIFX LAN Art-Net bridge"
+    pkt[26:26 + len(short)] = short
+    pkt[44:44 + len(long_)] = long_
+    pkt[173] = 1                                     # NumPortsLo = 1
+    pkt[174] = 0x80                                  # PortType[0]: DMX output
+    pkt[182] = 0x80                                  # GoodOutput[0]: transmitting
+    pkt[190] = universe & 0x0f                       # SwOut[0]
+    return bytes(pkt)
+
+
+def listen_artnet(fixtures, max_hz=20.0, smooth_ms=120, kelvin=3500,
+                  bind_host="0.0.0.0", poll_reply=True, rediscover=0,
+                  verbose=False):
+    """Receive Art-Net DMX and drive each mapped bulb, rate-limited per bulb."""
+    max_hz = max(1.0, max_hz)
+    min_interval = 1.0 / max_hz
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    try:
+        sock.bind((bind_host, ARTNET_PORT))
+    except OSError as exc:
+        sys.exit(f"Could not bind Art-Net port {ARTNET_PORT}: {exc}")
+    node_ip = local_ip()
+
+    # Index fixtures by universe and init per-fixture send state.
+    by_universe = {}
+    for f in fixtures:
+        f.setdefault("live_ip", f.get("ip"))
+        f["last_key"], f["last_send"], f["pending"] = None, 0.0, None
+        by_universe.setdefault(f["universe"], []).append(f)
+
+    print_fixture_table(fixtures)
+    print(f"\nArt-Net listener on {bind_host}:{ARTNET_PORT}  "
+          f"({len(fixtures)} fixture(s) across {len(by_universe)} universe(s))")
+    print(f"Rate limit: {max_hz:g} updates/s per bulb. Press Ctrl-C to stop.")
+
+    next_rediscover = (time.time() + rediscover) if rediscover else None
+    try:
+        while True:
+            ready, _, _ = select.select([sock], [], [], min_interval)
+            now = time.time()
+            if ready:
+                data, addr = sock.recvfrom(2048)
+                if len(data) >= 10 and data[:8] == ARTNET_ID:
+                    opcode = struct.unpack_from("<H", data, 8)[0]
+                    if opcode == OP_DMX and len(data) >= 18:
+                        universe = data[14] | (data[15] << 8)
+                        length = (data[16] << 8) | data[17]
+                        dmx = data[18:18 + length]
+                        for f in by_universe.get(universe, ()):
+                            i = f["address"] - 1
+                            if i + CHANNELS_PER_FIXTURE <= len(dmx):
+                                f["pending"] = rgba_to_hsbk(
+                                    dmx[i], dmx[i + 1], dmx[i + 2],
+                                    dmx[i + 3], dmx[i + 4], kelvin)
+                    elif opcode == OP_POLL and poll_reply:
+                        reply = build_artpoll_reply(
+                            node_ip, fixtures[0]["universe"] if fixtures else 0)
+                        sock.sendto(reply, (addr[0], ARTNET_PORT))
+
+            # Flush each fixture's latest value, rate-limited and de-duplicated.
+            for f in fixtures:
+                pending = f["pending"]
+                if pending is None or now - f["last_send"] < min_interval:
+                    continue
+                key = (round(pending[0], 1), round(pending[1], 1),
+                       round(pending[2], 1), int(pending[3]))
+                if key != f["last_key"]:
+                    set_color(*pending, smooth_ms, f["live_ip"])
+                    f["last_key"], f["last_send"] = key, now
+                    if verbose:
+                        print(f"[{f.get('label') or f['live_ip']}] "
+                              f"DMX@U{f['universe']}/{f['address']} -> "
+                              f"H{pending[0]:6.1f} S{pending[1]:5.1f} "
+                              f"B{pending[2]:5.1f}")
+                f["pending"] = None
+
+            if next_rediscover and now >= next_rediscover:
+                refresh_ips(fixtures)
+                next_rediscover = now + rediscover
+    except KeyboardInterrupt:
+        print("\nStopped.")
+    finally:
+        sock.close()
+
+
 # --- Argument helpers -------------------------------------------------------
 
 def find_by_label(label, timeout=3.0):
@@ -350,6 +557,25 @@ def main(argv=None):
     p_breathe.add_argument("--period", type=float, default=2, help="Seconds per cycle")
     p_breathe.add_argument("--cycles", type=float, default=5, help="Number of cycles")
 
+    p_map = sub.add_parser("dmxmap",
+                           help="Discover bulbs and write an editable DMX fixture map")
+    p_map.add_argument("--out", default="fixtures.json", help="Output file (default fixtures.json)")
+    p_map.add_argument("--universe", type=int, default=0, help="Base Art-Net universe (default 0)")
+    p_map.add_argument("--address", type=int, default=1, help="Base DMX address (default 1)")
+
+    p_listen = sub.add_parser("listen",
+                              help="Run as an Art-Net DMX node so QLab Light cues drive the bulbs")
+    p_listen.add_argument("--map", help="Fixture map JSON from `dmxmap` (default: auto-discover & assign)")
+    p_listen.add_argument("--universe", type=int, default=0, help="Base universe for auto-assign (default 0)")
+    p_listen.add_argument("--address", type=int, default=1, help="Base DMX address for auto-assign (default 1)")
+    p_listen.add_argument("--kelvin", type=int, default=3500, help="White temperature when color is desaturated")
+    p_listen.add_argument("--max-hz", type=float, default=20, help="Max LIFX updates/sec per bulb (default 20)")
+    p_listen.add_argument("--smooth", type=float, default=0.12, help="LIFX transition per update, seconds (default 0.12)")
+    p_listen.add_argument("--bind", default="0.0.0.0", help="Local interface to bind for Art-Net")
+    p_listen.add_argument("--rediscover", type=float, default=0, help="Re-resolve bulb IPs every N seconds (0=off)")
+    p_listen.add_argument("--no-poll-reply", action="store_true", help="Don't answer ArtPoll discovery")
+    p_listen.add_argument("--verbose", action="store_true", help="Print DMX -> HSBK updates")
+
     args = parser.parse_args(argv)
 
     if args.command == "discover":
@@ -364,6 +590,38 @@ def main(argv=None):
             state = get_state(bulb_ip)
             label = f'"{state["label"]}"' if state and state["label"] else "?"
             print(f"  {bulb_ip}  {label:24} (MAC {mac})")
+        return
+
+    if args.command == "dmxmap":
+        bulbs = discover_bulbs()
+        if not bulbs:
+            print("No bulbs found to map. Check that they're powered and on "
+                  "the same network.")
+            return
+        fixtures = auto_assign(bulbs, args.universe, args.address)
+        for f in fixtures:
+            f["live_ip"] = f["ip"]
+        print_fixture_table(fixtures)
+        save_map(args.out, fixtures)
+        print(f"\nWrote {len(fixtures)} fixture(s) to {args.out} "
+              f"(edit it to fix addresses/ordering, then `listen --map {args.out}`).")
+        return
+
+    if args.command == "listen":
+        if args.map:
+            fixtures = load_map(args.map)
+            refresh_ips(fixtures)
+        else:
+            bulbs = discover_bulbs()
+            if not bulbs:
+                sys.exit("No bulbs found to map. Check the network, or pass "
+                         "--map with a saved fixture file.")
+            fixtures = auto_assign(bulbs, args.universe, args.address)
+            for f in fixtures:
+                f["live_ip"] = f["ip"]
+        listen_artnet(fixtures, args.max_hz, int(args.smooth * 1000), args.kelvin,
+                      args.bind, not args.no_poll_reply, args.rediscover,
+                      args.verbose)
         return
 
     # All other commands target a single bulb (--ip/--label) or broadcast.
