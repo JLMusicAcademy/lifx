@@ -586,8 +586,17 @@ def service_fixture(f, c, now, min_interval, smooth_ms, verbose):
 
 def listen_artnet(fixtures, max_hz=20.0, smooth_ms=120, kelvin=3500,
                   bind_host="0.0.0.0", poll_reply=True, rediscover=0,
-                  verbose=False):
-    """Receive Art-Net DMX and drive each mapped bulb, rate-limited per bulb."""
+                  verbose=False, state=None, quiet=False):
+    """Receive Art-Net DMX and drive each mapped bulb, rate-limited per bulb.
+
+    Optional `state` is a duck-typed object the web UI passes in to control the
+    loop while it runs in a background thread. When provided it may expose:
+      - stop_event.is_set()    -> stop the loop cleanly
+      - paused (bool)          -> receive DMX but don't drive bulbs (manual/blackout)
+      - note_dmx(uni, dmx, t)  -> tap for the live DMX monitor
+    and individual fixtures may carry f["manual"] = True to be skipped (the web
+    UI is driving that bulb directly).
+    """
     max_hz = max(1.0, max_hz)
     min_interval = 1.0 / max_hz
 
@@ -604,10 +613,12 @@ def listen_artnet(fixtures, max_hz=20.0, smooth_ms=120, kelvin=3500,
     try:
         sock.bind((bind_host, ARTNET_PORT))
     except OSError as exc:
-        sys.exit(
-            f"Could not bind Art-Net port {ARTNET_PORT}: {exc}\n"
-            f"Another app is using it. Find it with:  lsof -nP -i UDP:{ARTNET_PORT}\n"
-            f"If it's a stale copy of this script:    pkill -f 'lifx_control.*listen'")
+        msg = (f"Could not bind Art-Net port {ARTNET_PORT}: {exc}\n"
+               f"Another app is using it. Find it with:  lsof -nP -i UDP:{ARTNET_PORT}\n"
+               f"If it's a stale copy of this script:    pkill -f 'lifx_control.*listen'")
+        if state is not None:
+            raise OSError(msg)  # let the web layer surface it instead of exiting
+        sys.exit(msg)
     node_ip = local_ip()
 
     # Index fixtures by universe and init per-fixture effect state.
@@ -621,14 +632,19 @@ def listen_artnet(fixtures, max_hz=20.0, smooth_ms=120, kelvin=3500,
         f["step"], f["step_at"] = 0, 0.0
         by_universe.setdefault(f["universe"], []).append(f)
 
-    print_fixture_table(fixtures)
-    print(f"\nArt-Net listener on {bind_host}:{ARTNET_PORT}  "
-          f"({len(fixtures)} fixture(s) across {len(by_universe)} universe(s))")
-    print(f"Rate limit: {max_hz:g} updates/s per bulb. Press Ctrl-C to stop.")
+    if not quiet:
+        print_fixture_table(fixtures)
+        print(f"\nArt-Net listener on {bind_host}:{ARTNET_PORT}  "
+              f"({len(fixtures)} fixture(s) across {len(by_universe)} universe(s))")
+        print(f"Rate limit: {max_hz:g} updates/s per bulb. Press Ctrl-C to stop.")
+
+    def stopping():
+        return state is not None and getattr(state, "stop_event", None) is not None \
+            and state.stop_event.is_set()
 
     next_rediscover = (time.time() + rediscover) if rediscover else None
     try:
-        while True:
+        while not stopping():
             ready, _, _ = select.select([sock], [], [], min_interval)
             now = time.time()
             if ready:
@@ -639,6 +655,8 @@ def listen_artnet(fixtures, max_hz=20.0, smooth_ms=120, kelvin=3500,
                         universe = data[14] | (data[15] << 8)
                         length = (data[16] << 8) | data[17]
                         dmx = data[18:18 + length]
+                        if state is not None and hasattr(state, "note_dmx"):
+                            state.note_dmx(universe, dmx, now)
                         for f in by_universe.get(universe, ()):
                             i = f["address"] - 1
                             if i + CHANNELS_PER_FIXTURE <= len(dmx):
@@ -650,16 +668,20 @@ def listen_artnet(fixtures, max_hz=20.0, smooth_ms=120, kelvin=3500,
 
             # Service every fixture each tick: static colors are throttled, native
             # effects are (re)armed on the bulb, script effects are animated.
-            for f in fixtures:
-                if f["controls"] is not None:
-                    service_fixture(f, f["controls"], now, min_interval,
-                                    smooth_ms, verbose)
+            # Skip when globally paused or when the web UI is driving a fixture.
+            paused = state is not None and getattr(state, "paused", False)
+            if not paused:
+                for f in fixtures:
+                    if f["controls"] is not None and not f.get("manual"):
+                        service_fixture(f, f["controls"], now, min_interval,
+                                        smooth_ms, verbose)
 
             if next_rediscover and now >= next_rediscover:
                 refresh_ips(fixtures)
                 next_rediscover = now + rediscover
     except KeyboardInterrupt:
-        print("\nStopped.")
+        if not quiet:
+            print("\nStopped.")
     finally:
         sock.close()
 

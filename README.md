@@ -184,6 +184,43 @@ changes. Use `--rediscover 30` to re-resolve IPs every 30s while listening.
 | `--no-poll-reply` | off     | Don't answer ArtPoll node discovery                |
 | `--verbose`       | off     | Print each DMX -> HSBK update                       |
 
+## Web UI (configuration & control)
+
+`lifx_web.py` is an optional, dependency-free web app that wraps everything
+above in a browser UI — designed to run headless on a Raspberry Pi 5 next to
+QLab. Start it with:
+
+```bash
+python3 lifx_web.py        # serves http://<device>:8080
+```
+
+Default login: **admin / admin123** (change it in Settings).
+
+What it does:
+
+- **Bulbs** — discover bulbs, **Identify** (flash a bulb so you can tell which
+  physical fixture it is), rename them (Entrance, Wall, Overhead…), and control
+  any bulb directly (color, intensity, effects) from a browser or phone.
+- **Patch** — auto-assign DMX addresses, flag address conflicts, edit each
+  bulb's universe/address/group, and export a **patch CSV** for QLab.
+- **Effects** — reference table for the Mode/Speed/Strobe channels.
+- **Monitor** — start/stop the Art-Net listener, see the port status, and watch
+  **live DMX in** (so you can confirm QLab is actually sending).
+- **Network** — set this device's IP to **DHCP or a static address** via
+  NetworkManager (`nmcli`, Raspberry Pi), with a **subnet scan** that finds
+  free addresses to avoid conflicts.
+- **Settings** — listener tuning (`max-hz`, `smooth`, kelvin…) and change
+  password.
+
+**Password recovery:** if the password is lost, restart the device **3 times in
+a row, each within 60 seconds** of the previous boot, and the password resets to
+`admin` / `admin123`. The window is configurable (`LIFX_RESTART_WINDOW`) and is
+set above one Pi boot cycle so back-to-back reboots register.
+
+Run it as a service with the provided `lifx-bridge.service` (root is needed for
+the Network tab's `nmcli` changes). Config lives in `~/.lifx-bridge/` (or
+`LIFX_BRIDGE_DIR`).
+
 ## Value ranges
 
 - **hue**: 0–360 degrees

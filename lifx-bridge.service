@@ -1,0 +1,29 @@
+# Sample systemd unit for the LIFX DMX Bridge web UI on a Raspberry Pi.
+# Install:
+#   sudo cp lifx-bridge.service /etc/systemd/system/
+#   sudo systemctl enable --now lifx-bridge
+#
+# Runs as root so the Network tab can change the host IP via nmcli, and so it
+# can bind privileged things if needed. The restart-to-reset password feature
+# counts *device reboots* (or `systemctl restart lifx-bridge`), so Restart is
+# left at on-failure (NOT always) to avoid a crash loop tripping the reset.
+
+[Unit]
+Description=LIFX DMX Bridge (Art-Net listener + web UI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/pi/lifx/lifx_web.py
+WorkingDirectory=/home/pi/lifx
+Environment=LIFX_BRIDGE_DIR=/var/lib/lifx-bridge
+# Window must exceed one Pi boot (~20-35s); 60s catches back-to-back reboots.
+Environment=LIFX_RESTART_WINDOW=60
+Environment=LIFX_RESTART_NEEDED=3
+Restart=on-failure
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target
