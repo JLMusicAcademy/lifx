@@ -783,38 +783,78 @@ def port_is_free(port):
 
 _STYLE = """
 <style>
-:root{color-scheme:dark}
+/* Mobile-first, light, soft & rounded. Larger tap targets & type. */
+:root{
+  --bg:#eef2f9; --card:#ffffff; --ink:#1e2533; --muted:#6b7488;
+  --brand:#4f7cff; --brand-d:#3a67f0; --ok:#13a06a; --bad:#e44b3f;
+  --line:#e7ebf3; --radius:18px;
+  --shadow:0 8px 24px rgba(36,46,66,.10), 0 2px 6px rgba(36,46,66,.06);
+  --shadow-sm:0 2px 8px rgba(36,46,66,.10);
+}
 *{box-sizing:border-box}
-body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:0;
-  background:#15171c;color:#e7e9ee}
-header{background:#1d2026;padding:12px 18px;display:flex;align-items:center;gap:14px;
-  position:sticky;top:0;border-bottom:1px solid #2b2f37}
-header h1{font-size:17px;margin:0;font-weight:600}
-nav{display:flex;gap:6px;flex-wrap:wrap}
-nav button{background:#262a32;border:0;color:#c7ccd6;padding:8px 12px;border-radius:8px;
-  cursor:pointer;font-size:14px}
-nav button.active{background:#3b82f6;color:#fff}
-main{padding:18px;max-width:1000px;margin:0 auto}
-.card{background:#1d2026;border:1px solid #2b2f37;border-radius:12px;padding:16px;
-  margin-bottom:16px}
-.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-button.act{background:#3b82f6;color:#fff;border:0;border-radius:8px;padding:9px 14px;
-  cursor:pointer;font-size:14px}
-button.ghost{background:#2b2f37;color:#dde1e8}
-button.warn{background:#ef4444;color:#fff}
-input,select{background:#13151a;border:1px solid #333a44;color:#e7e9ee;border-radius:8px;
-  padding:8px;font-size:14px}
-table{width:100%;border-collapse:collapse;font-size:14px}
-th,td{text-align:left;padding:8px;border-bottom:1px solid #262a32}
-.pill{font-size:12px;padding:2px 8px;border-radius:20px;background:#262a32}
-.ok{color:#34d399}.bad{color:#f87171}.muted{color:#8b93a1;font-size:13px}
+html{font-size:17px;-webkit-text-size-adjust:100%}
+body{margin:0;line-height:1.5;color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
+  background:linear-gradient(180deg,#f3f6fc,#e9eef7 240px) fixed,var(--bg)}
+header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px;
+  padding:12px 14px;background:rgba(255,255,255,.82);backdrop-filter:saturate(180%) blur(12px);
+  border-bottom:1px solid var(--line)}
+header h1{margin:0;font-size:18px;font-weight:800;letter-spacing:-.02em;
+  background:linear-gradient(90deg,var(--brand),#7a5cff);-webkit-background-clip:text;
+  background-clip:text;color:transparent;white-space:nowrap}
+nav{display:flex;gap:8px;overflow-x:auto;flex:1;padding:2px;scrollbar-width:none}
+nav::-webkit-scrollbar{display:none}
+nav button{flex:0 0 auto;background:#f1f4fb;border:1px solid var(--line);color:#4a546a;
+  padding:10px 15px;border-radius:999px;cursor:pointer;font-size:15px;
+  font-weight:600;transition:.15s;box-shadow:var(--shadow-sm)}
+nav button.active{background:linear-gradient(180deg,var(--brand),var(--brand-d));
+  color:#fff;border-color:transparent;box-shadow:0 6px 16px rgba(79,124,255,.4)}
+main{padding:16px;max-width:980px;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  padding:18px;margin-bottom:16px;box-shadow:var(--shadow)}
+h2{font-size:17px;margin:0 0 14px;font-weight:700}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
 .flex{display:flex;gap:14px;flex-wrap:wrap}
+button{font-family:inherit}
+button.act,button.ghost,button.warn,a.act{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  border:0;border-radius:14px;padding:13px 20px;font-size:16px;font-weight:650;
+  cursor:pointer;min-height:48px;transition:transform .06s ease, box-shadow .2s,filter .2s}
+button.act,a.act{background:linear-gradient(180deg,var(--brand),var(--brand-d));color:#fff;
+  box-shadow:0 6px 16px rgba(79,124,255,.38);text-decoration:none}
+button.ghost{background:#fff;color:var(--ink);border:1px solid var(--line);
+  box-shadow:var(--shadow-sm)}
+button.warn{background:linear-gradient(180deg,#ff6a5d,var(--bad));color:#fff;
+  box-shadow:0 6px 16px rgba(228,75,63,.34)}
+button.act:hover,a.act:hover,button.warn:hover{filter:brightness(1.05)}
+button:active{transform:translateY(1px)}
+input,select{font-family:inherit;font-size:16px;padding:12px 13px;border-radius:13px;
+  border:1px solid #d8deea;background:#fff;color:var(--ink);width:100%;
+  box-shadow:inset 0 1px 2px rgba(36,46,66,.05)}
+input:focus,select:focus{outline:none;border-color:var(--brand);
+  box-shadow:0 0 0 4px rgba(79,124,255,.16)}
+input[type=range]{padding:0;box-shadow:none;accent-color:var(--brand)}
+input[type=color]{padding:4px;height:48px}
+label.fld{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:600;
+  color:var(--muted);min-width:120px}
+.pill{font-size:13px;padding:4px 11px;border-radius:999px;background:#eef2fb;
+  color:#4a546a;font-weight:600}
+.ok{color:var(--ok)}.bad{color:var(--bad)}
+.muted{color:var(--muted);font-size:15px}
 .hide{display:none}
-label.fld{display:flex;flex-direction:column;gap:4px;font-size:13px;color:#aeb6c2}
-h2{font-size:15px;margin:0 0 12px}
-.toast{position:fixed;bottom:18px;right:18px;background:#3b82f6;color:#fff;
-  padding:10px 14px;border-radius:8px;opacity:0;transition:.2s}
-.toast.show{opacity:1}
+.tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{width:100%;border-collapse:collapse;font-size:15px;min-width:420px}
+th,td{text-align:left;padding:11px 10px;border-bottom:1px solid var(--line)}
+th{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(10px);
+  background:#1e2533;color:#fff;padding:13px 20px;border-radius:14px;font-weight:600;
+  box-shadow:var(--shadow);opacity:0;transition:.25s;z-index:50;max-width:90vw}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+@media(min-width:560px){
+  main{padding:24px}
+  .card{padding:22px}
+  header{padding:14px 22px}
+}
 </style>
 """
 
@@ -927,7 +967,7 @@ async function control(id){
     mode:document.getElementById('mode_'+id).value,
     speed:+document.getElementById('spd_'+id).value,
     strobe:+document.getElementById('strb_'+id).value});
-  toast('Applied');refresh()}
+  toast('Applied')}
 
 function renderPatch(){
   const f=S.fixtures||[];const c=S.conflicts||[];
@@ -937,7 +977,7 @@ function renderPatch(){
     <span class=muted>${S.channels_per_fixture} channels per fixture</span></div>`;
   if(c.length)h+=`<div class=bad style="margin-top:10px"><b>Conflicts:</b><br>${c.map(esc).join('<br>')}</div>`;
   else h+=`<div class=ok style="margin-top:10px">No address conflicts.</div>`;
-  h+=`</div><div class=card><table><tr><th>Name</th><th>Universe</th><th>Start</th><th>Group</th><th></th></tr>`;
+  h+=`</div><div class=card><div class=tablewrap><table><tr><th>Name</th><th>Universe</th><th>Start</th><th>Group</th><th></th></tr>`;
   f.forEach(x=>{h+=`<tr>
     <td>${esc(x.label)||'<span class=muted>'+x.ip+'</span>'}</td>
     <td><input style="width:64px" id="u_${x.id}" value="${x.universe}"></td>
@@ -945,7 +985,7 @@ function renderPatch(){
     <td><input style="width:110px" id="g_${x.id}" value="${esc(x.group)}"></td>
     <td><button class=ghost onclick="setAddr('${x.id}')">Set</button>
         <button class=warn onclick="rm('${x.id}')">✕</button></td></tr>`});
-  h+=`</table></div>`;view.innerHTML=h;
+  h+=`</table></div></div>`;view.innerHTML=h;
 }
 async function autoassign(){await api('/api/auto-assign',{});toast('Re-addressed');refresh()}
 async function setAddr(id){await api('/api/fixture/address',{id,
@@ -957,7 +997,7 @@ async function rm(id){if(confirm('Remove this fixture from the map?')){
 
 function renderEffects(){
   view.innerHTML=`<div class=card><h2>Effect / Mode channel (ch+5)</h2>
-  <table><tr><th>DMX value</th><th>Mode</th><th>Runs on</th></tr>
+  <div class=tablewrap><table><tr><th>DMX value</th><th>Mode</th><th>Runs on</th></tr>
   <tr><td>0–9</td><td>Static</td><td>SetColor</td></tr>
   <tr><td>10–39</td><td>Breathe</td><td>bulb firmware</td></tr>
   <tr><td>40–69</td><td>Pulse / blink</td><td>bulb firmware</td></tr>
@@ -966,7 +1006,7 @@ function renderEffects(){
   <tr><td>130–169</td><td>Color pulse</td><td>bulb firmware</td></tr>
   <tr><td>170–209</td><td>Rainbow cycle</td><td>script-generated</td></tr>
   <tr><td>210–239</td><td>Color loop</td><td>script-generated</td></tr>
-  <tr><td>240–255</td><td>Candle flicker</td><td>script-generated</td></tr></table>
+  <tr><td>240–255</td><td>Candle flicker</td><td>script-generated</td></tr></table></div>
   <p class=muted>ch+6 = Effect Speed (slow→fast). ch+7 = Strobe overlay (0=off),
   which takes priority over the mode. Native firmware effects cost almost no
   network traffic; script effects stream at the rate cap.</p></div>`;
@@ -1102,7 +1142,14 @@ function renderHelp(){
   <p class=muted>Channels per fixture: 8. A 512-channel universe holds 64 bulbs.</p></div>`;
 }
 
-drawNav();refresh();setInterval(()=>{if(['Monitor','Bulbs'].includes(tab))refresh()},2500);
+drawNav();refresh();
+// Only the Monitor tab needs live polling. Never re-render while the user is
+// interacting with a field (that was closing dropdowns mid-click).
+setInterval(()=>{
+  const a=document.activeElement;
+  if(a && ['INPUT','SELECT','TEXTAREA'].includes(a.tagName))return;
+  if(tab==='Monitor')refresh();
+},3000);
 </script></body></html>"""
 
 
