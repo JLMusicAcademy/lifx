@@ -42,7 +42,9 @@ single bulb with --ip 192.168.1.50 (find it with `discover`).
 
 import argparse
 import colorsys
+import hashlib
 import json
+import math
 import random
 import select
 import socket
@@ -66,6 +68,50 @@ MSG_GET_POWER = 116
 MSG_SET_POWER = 117      # light SetPower (supports a duration / fade)
 MSG_STATE_POWER = 118
 MSG_SET_WAVEFORM_OPTIONAL = 119  # like SetWaveform but oscillate only chosen attrs
+
+# Device-info / maintenance messages (all officially documented over the LAN).
+MSG_GET_HOST_FIRMWARE = 14
+MSG_STATE_HOST_FIRMWARE = 15
+MSG_GET_WIFI_INFO = 16
+MSG_STATE_WIFI_INFO = 17
+MSG_GET_WIFI_FIRMWARE = 18
+MSG_STATE_WIFI_FIRMWARE = 19
+MSG_GET_LABEL = 23
+MSG_SET_LABEL = 24
+MSG_STATE_LABEL = 25
+MSG_GET_VERSION = 32
+MSG_STATE_VERSION = 33
+MSG_GET_INFO = 34
+MSG_STATE_INFO = 35
+MSG_GET_LOCATION = 48
+MSG_SET_LOCATION = 49
+MSG_STATE_LOCATION = 50
+MSG_GET_GROUP = 51
+MSG_SET_GROUP = 52
+MSG_STATE_GROUP = 53
+MSG_ECHO_REQUEST = 58
+MSG_ECHO_RESPONSE = 59
+
+# A small map of LIFX product IDs -> (name, has_color). Anything not listed
+# falls back to "Product <id>". (LIFX publishes the full list as products.json.)
+LIFX_PRODUCTS = {
+    1: ("Original 1000", True), 3: ("Color 650", True),
+    10: ("White 800 (Low Voltage)", False), 11: ("White 800 (High Voltage)", False),
+    18: ("White 900 BR30", False), 20: ("Color 1000 BR30", True),
+    22: ("Color 1000", True), 27: ("LIFX A19", True), 28: ("LIFX BR30", True),
+    29: ("LIFX A19 Night Vision", True), 30: ("LIFX BR30 Night Vision", True),
+    31: ("LIFX Z", True), 32: ("LIFX Z", True), 38: ("LIFX Beam", True),
+    43: ("LIFX A19", True), 44: ("LIFX BR30", True),
+    45: ("LIFX A19 Night Vision", True), 46: ("LIFX BR30 Night Vision", True),
+    49: ("LIFX Mini Color", True), 50: ("LIFX Mini White", False),
+    51: ("LIFX Mini White", False), 52: ("LIFX GU10", True),
+    55: ("LIFX Tile", True), 57: ("LIFX Candle", True), 59: ("LIFX Mini Color", True),
+    62: ("LIFX A19", True), 63: ("LIFX BR30", True), 68: ("LIFX Candle", True),
+    81: ("LIFX Candle White", False), 82: ("LIFX Filament", False),
+    90: ("LIFX Clean", True), 97: ("LIFX A19", True), 98: ("LIFX BR30", True),
+    99: ("LIFX Clean", True), 109: ("LIFX A19 Night Vision", True),
+    111: ("LIFX A19", True),
+}
 
 # Waveform identifiers used by SetWaveform
 WAVEFORM_SAW = 0
@@ -282,6 +328,143 @@ def get_state(ip=None):
         "saturation": round(sat / 65535 * 100, 1),
         "brightness": round(bri / 65535 * 100, 1),
         "kelvin": kelvin,
+    }
+
+
+# --- Device info / maintenance (replicates much of the LIFX app) ------------
+
+def _name_guid(kind, name):
+    """Deterministic 16-byte GUID from a name, so bulbs sharing a group/location
+    name share the same GUID (which is how the LIFX app groups them)."""
+    return hashlib.sha1(f"{kind}:{name}".encode()).digest()[:16]
+
+
+def get_version(ip):
+    """Return (vendor, product_id, model_name, has_color) or None."""
+    _, mt, p = query(build_packet(MSG_GET_VERSION, res_required=True), ip,
+                     MSG_STATE_VERSION)
+    if mt != MSG_STATE_VERSION or len(p) < 12:
+        return None
+    vendor, product = struct.unpack_from("<II", p, 0)
+    name, has_color = LIFX_PRODUCTS.get(product, (f"Product {product}", True))
+    return vendor, product, name, has_color
+
+
+def get_host_firmware(ip):
+    """Return the bulb's firmware version as 'major.minor', or None."""
+    _, mt, p = query(build_packet(MSG_GET_HOST_FIRMWARE, res_required=True), ip,
+                     MSG_STATE_HOST_FIRMWARE)
+    if mt != MSG_STATE_HOST_FIRMWARE or len(p) < 20:
+        return None
+    minor, major = struct.unpack_from("<HH", p, 16)
+    return f"{major}.{minor}"
+
+
+def get_wifi_info(ip):
+    """Return {'signal_mw', 'dbm', 'bars'(0-4), 'label'} for Wi-Fi signal, or None."""
+    _, mt, p = query(build_packet(MSG_GET_WIFI_INFO, res_required=True), ip,
+                     MSG_STATE_WIFI_INFO)
+    if mt != MSG_STATE_WIFI_INFO or len(p) < 4:
+        return None
+    (signal,) = struct.unpack_from("<f", p, 0)
+    if signal and signal > 0:
+        dbm = 10 * math.log10(signal)
+    else:
+        return {"signal_mw": signal, "dbm": None, "bars": 0, "label": "unknown"}
+    if dbm >= -50:
+        bars, label = 4, "excellent"
+    elif dbm >= -60:
+        bars, label = 3, "good"
+    elif dbm >= -70:
+        bars, label = 2, "fair"
+    elif dbm >= -80:
+        bars, label = 1, "weak"
+    else:
+        bars, label = 0, "very weak"
+    return {"signal_mw": signal, "dbm": round(dbm, 1), "bars": bars, "label": label}
+
+
+def get_uptime(ip):
+    """Return the bulb's uptime in seconds, or None."""
+    _, mt, p = query(build_packet(MSG_GET_INFO, res_required=True), ip,
+                     MSG_STATE_INFO)
+    if mt != MSG_STATE_INFO or len(p) < 24:
+        return None
+    _time, uptime_ns, _downtime = struct.unpack_from("<QQQ", p, 0)
+    return uptime_ns / 1e9
+
+
+def get_label(ip):
+    _, mt, p = query(build_packet(MSG_GET_LABEL, res_required=True), ip,
+                     MSG_STATE_LABEL)
+    if mt != MSG_STATE_LABEL:
+        return None
+    return p[:32].split(b"\x00", 1)[0].decode("utf-8", "replace")
+
+
+def set_label(ip, label):
+    """Write the bulb's name into the device itself (as the LIFX app does)."""
+    payload = label.encode("utf-8")[:32].ljust(32, b"\x00")
+    send(build_packet(MSG_SET_LABEL, payload), ip)
+
+
+def _get_named(ip, get_type, state_type):
+    _, mt, p = query(build_packet(get_type, res_required=True), ip, state_type)
+    if mt != state_type or len(p) < 48:
+        return None
+    return p[16:48].split(b"\x00", 1)[0].decode("utf-8", "replace")
+
+
+def get_group(ip):
+    return _get_named(ip, MSG_GET_GROUP, MSG_STATE_GROUP)
+
+
+def get_location(ip):
+    return _get_named(ip, MSG_GET_LOCATION, MSG_STATE_LOCATION)
+
+
+def _set_named(ip, set_type, kind, name):
+    guid = _name_guid(kind, name)
+    label = name.encode("utf-8")[:32].ljust(32, b"\x00")
+    updated_at = int(time.time() * 1e9)
+    send(build_packet(set_type, guid + label + struct.pack("<Q", updated_at)), ip)
+
+
+def set_group(ip, name):
+    """Assign the bulb to a named group (shared GUID groups them in the app)."""
+    _set_named(ip, MSG_SET_GROUP, "group", name)
+
+
+def set_location(ip, name):
+    _set_named(ip, MSG_SET_LOCATION, "location", name)
+
+
+def echo(ip, timeout=1.5):
+    """Round-trip connectivity test. Returns latency in ms, or None if no reply."""
+    payload = b"lifx-bridge-echo".ljust(64, b"\x00")
+    start = time.time()
+    _, mt, p = query(build_packet(MSG_ECHO_REQUEST, res_required=True), ip,
+                     MSG_ECHO_RESPONSE, timeout=timeout)
+    if mt != MSG_ECHO_RESPONSE:
+        return None
+    return round((time.time() - start) * 1000, 1)
+
+
+def device_info(ip):
+    """Aggregate the maintenance/diagnostic info for one bulb (several queries)."""
+    ver = get_version(ip)
+    return {
+        "ip": ip,
+        "model": ver[2] if ver else None,
+        "product_id": ver[1] if ver else None,
+        "has_color": ver[3] if ver else None,
+        "firmware": get_host_firmware(ip),
+        "wifi": get_wifi_info(ip),
+        "uptime_s": get_uptime(ip),
+        "label": get_label(ip),
+        "group": get_group(ip),
+        "location": get_location(ip),
+        "latency_ms": echo(ip),
     }
 
 

@@ -689,6 +689,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send(200, {"ok": True, "settings": MGR.settings,
                                     "note": "Restart the listener to apply."})
 
+        if path == "/api/fixture/info":
+            f = MGR.find(body.get("id"))
+            if not f:
+                return self._send(200, {"ok": False, "error": "Unknown fixture."})
+            ip = f.get("live_ip") or f.get("ip")
+            return self._send(200, {"ok": True, "info": lifx.device_info(ip)})
+
+        if path == "/api/fixture/push-name":
+            f = MGR.find(body.get("id"))
+            if f:
+                name = body.get("label", "")[:32]
+                lifx.set_label(f.get("live_ip") or f.get("ip"), name)
+                f["label"] = name
+                MGR.save()
+            return self._send(200, {"ok": bool(f)})
+
+        if path == "/api/fixture/group":
+            f = MGR.find(body.get("id"))
+            if f:
+                ip = f.get("live_ip") or f.get("ip")
+                if body.get("group"):
+                    lifx.set_group(ip, body["group"][:32])
+                    f["group"] = body["group"][:32]
+                if body.get("location"):
+                    lifx.set_location(ip, body["location"][:32])
+                MGR.save()
+            return self._send(200, {"ok": bool(f)})
+
         if path == "/api/network/dhcp":
             ok, msg = network_set_dhcp()
             return self._send(200, {"ok": ok, "message": msg})
@@ -827,7 +855,7 @@ APP_HTML = """<!doctype html><html><head><meta charset=utf-8>
 <div id=toast class=toast></div>
 <script>
 let S={};
-const tabs=['Bulbs','Patch','Effects','Monitor','Network','Settings','Help'];
+const tabs=['Bulbs','Patch','Effects','Monitor','Maintenance','Network','Settings','Help'];
 function toast(m){const t=document.getElementById('toast');t.textContent=m;
   t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1800)}
 async function api(p,b){const r=await fetch(p,{method:b?'POST':'GET',
@@ -845,6 +873,7 @@ function render(){
   if(tab==='Patch')return renderPatch();
   if(tab==='Effects')return renderEffects();
   if(tab==='Monitor')return renderMonitor();
+  if(tab==='Maintenance')return renderMaint();
   if(tab==='Network')return renderNetwork();
   if(tab==='Settings')return renderSettings();
   if(tab==='Help')return renderHelp();
@@ -966,6 +995,45 @@ function renderMonitor(){
 async function listener(action){const j=await api('/api/listener',{action});
   toast('Listener '+action);if(j.error)toast(j.error);refresh()}
 
+function renderMaint(){
+  const f=S.fixtures||[];
+  let h=`<div class=card><h2>Bulb maintenance</h2><p class=muted>
+   Read diagnostics and write names/groups onto the bulbs themselves — most of
+   what the LIFX app does day-to-day. (First-time Wi-Fi onboarding of a new bulb
+   and firmware updates still need the LIFX app.)</p></div>`;
+  if(!f.length)h+=`<div class=card class=muted>Discover bulbs first.</div>`;
+  f.forEach(x=>{
+    h+=`<div class=card>
+      <div class=row><b>${esc(x.label)||x.ip}</b><span class=pill>${x.ip}</span>
+        <button class=act onclick="loadInfo('${x.id}')">Load info</button></div>
+      <div id="info_${x.id}" class=muted style="margin-top:8px"></div>
+      <div class=row style="margin-top:10px">
+        <label class=fld>Name on bulb<input id="mn_${x.id}" value="${esc(x.label)}"></label>
+        <button class=ghost onclick="pushName('${x.id}')">Write name to bulb</button>
+        <label class=fld>Group<input id="mg_${x.id}" value="${esc(x.group)}"></label>
+        <button class=ghost onclick="setGroup('${x.id}')">Set group</button>
+      </div></div>`;
+  });
+  view.innerHTML=h;
+}
+function bars(n){return '▁▂▃▄'.slice(0,Math.max(1,n)).padEnd(4,'·')}
+async function loadInfo(id){
+  const el=document.getElementById('info_'+id);el.textContent='Querying bulb…';
+  const j=await api('/api/fixture/info',{id});
+  if(!j.ok){el.textContent=j.error||'No reply';return}
+  const i=j.info, w=i.wifi||{};
+  const up=i.uptime_s?(i.uptime_s>86400?(i.uptime_s/86400).toFixed(1)+'d':
+    (i.uptime_s/3600).toFixed(1)+'h'):'?';
+  el.innerHTML=`<b>${esc(i.model||'?')}</b> · fw ${esc(i.firmware||'?')}
+   · Wi-Fi ${w.dbm!=null?w.dbm+' dBm ('+w.label+')':'?'}
+   · uptime ${up} · ${i.latency_ms!=null?i.latency_ms+'ms':'no echo'}
+   · group ${esc(i.group||'—')} / room ${esc(i.location||'—')}`;
+}
+async function pushName(id){await api('/api/fixture/push-name',
+  {id,label:document.getElementById('mn_'+id).value});toast('Name written to bulb');refresh()}
+async function setGroup(id){await api('/api/fixture/group',
+  {id,group:document.getElementById('mg_'+id).value});toast('Group set');refresh()}
+
 async function renderNetwork(){
   const n=await api('/api/network');
   let h=`<div class=card><h2>Host network (this device)</h2>
@@ -1045,7 +1113,36 @@ class ThreadingHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     allow_reuse_address = True
 
 
+def ensure_appliance_ip(ip):
+    """Add a fixed link-local management IP *alongside* DHCP so a directly-
+    connected computer can always reach the UI at a known address (the way an
+    appliance like a Chauvet DMX-AN2 ships on a fixed IP). Additive and
+    reversible — it does not disturb the existing DHCP lease. Pi/Linux only."""
+    if not _have_nmcli():
+        return False, "nmcli not available (appliance IP is Linux-only)."
+    con = network_status().get("connection")
+    if not con:
+        return False, "No active network connection to attach the IP to."
+    for cmd in (["nmcli", "con", "mod", con, "+ipv4.addresses", f"{ip}/16"],
+                ["nmcli", "con", "up", con]):
+        rc, _, err = _run(cmd)
+        if rc != 0:
+            return False, err or "nmcli failed (need root?)."
+    return True, f"Reachable at http://{ip}:<port> from a directly-connected computer."
+
+
 def main():
+    import argparse
+    ap = argparse.ArgumentParser(description="LIFX DMX Bridge web UI")
+    ap.add_argument("--port", type=int, help="web UI port (default 8080)")
+    ap.add_argument("--mode", choices=["dev", "appliance"], default="dev",
+                    help="dev (default): serve on the normal network, never "
+                         "touch host IP. appliance: also pin a fixed link-local "
+                         "management IP for direct-connect setup (Pi only).")
+    ap.add_argument("--appliance-ip", default="169.254.7.7",
+                    help="fixed management IP used in appliance mode")
+    args = ap.parse_args()
+
     ensure_dir()
     reset, count = record_restart_and_maybe_reset()
     if reset:
@@ -1057,12 +1154,16 @@ def main():
               f"{RESTART_WINDOW:g}s of each other).")
     load_auth()  # ensure auth.json exists
 
+    if args.mode == "appliance":
+        ok, msg = ensure_appliance_ip(args.appliance_ip)
+        print(f"Appliance mode: {msg}" if ok else f"Appliance mode skipped: {msg}")
+
     if MGR.settings.get("autostart") and MGR.fixtures:
         MGR.start()
 
-    port = int(MGR.settings.get("web_port", 8080))
+    port = int(args.port or MGR.settings.get("web_port", 8080))
     httpd = ThreadingHTTPServer(("0.0.0.0", port), Handler)
-    print(f"LIFX Bridge web UI on http://0.0.0.0:{port}  "
+    print(f"LIFX Bridge web UI ({args.mode}) on http://0.0.0.0:{port}  "
           f"(default login {DEFAULT_USER}/{DEFAULT_PASS})")
     try:
         httpd.serve_forever()
