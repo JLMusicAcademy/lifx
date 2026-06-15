@@ -481,35 +481,41 @@ class Manager:
         ip = f.get("live_ip") or f.get("ip")
         f["manual"] = True
         mode = body.get("mode", "static")
+        intensity = int(body.get("intensity", 255))
         hsbk = lifx.rgba_to_hsbk(
             int(body.get("r", 0)), int(body.get("g", 0)), int(body.get("b", 0)),
-            int(body.get("a", 0)), int(body.get("intensity", 255)),
-            self.settings["kelvin"])
-        speed = int(body.get("speed", 128))
-        strobe = int(body.get("strobe", 0))
-        c = {"hsbk": hsbk, "intensity": int(body.get("intensity", 255)) / 255 * 100,
+            int(body.get("a", 0)), intensity, self.settings["kelvin"])
+        smooth = self.settings["smooth_ms"]
+        # A bulb whose power is OFF (Blackout, or the LIFX app) ignores SetColor,
+        # so an explicit user action must also turn it on (or off at intensity 0).
+        lifx.set_power(intensity > 0, smooth, ip)
+        c = {"hsbk": hsbk, "intensity": intensity / 255 * 100,
              "kelvin": self.settings["kelvin"], "mode": mode,
-             "speed": speed, "strobe": strobe}
-        # Reuse the same effect engine the listener uses, one-shot.
-        for k in ("last_key", "last_send", "armed", "rearm_at", "phase",
-                  "anim_last", "step", "step_at"):
-            f.setdefault(k, 0 if "step" in k or "_at" in k or "send" in k else None)
-        lifx.service_fixture(f, c, time.time(), 0.05, self.settings["smooth_ms"], False)
+             "speed": int(body.get("speed", 128)), "strobe": int(body.get("strobe", 0))}
+        # Force a fresh, un-throttled send for an explicit click (no de-dup).
+        f["last_send"], f["last_key"], f["armed"] = 0.0, None, None
+        for k in ("rearm_at", "phase", "anim_last", "step", "step_at"):
+            if not isinstance(f.get(k), (int, float)):
+                f[k] = 0.0
+        lifx.service_fixture(f, c, time.time(), 0.0, smooth, False)
+        print(f"[web] manual {mode} intensity={intensity} -> {ip}")
+        return ip
 
     def release(self, f):
         f["manual"] = False
 
     def blackout(self, on):
+        """on=True: pause Art-Net and power every bulb off.
+        on=False (Resume): un-pause and power every bulb back on."""
         if self.state:
             self.state.paused = on
-        if on:
-            for f in self.fixtures:
-                ip = f.get("live_ip") or f.get("ip")
-                if ip:
-                    try:
-                        lifx.set_power(False, 300, ip)
-                    except OSError:
-                        pass
+        for f in self.fixtures:
+            ip = f.get("live_ip") or f.get("ip")
+            if ip:
+                try:
+                    lifx.set_power(not on, 400, ip)
+                except OSError:
+                    pass
 
 
 MGR = Manager()
@@ -643,9 +649,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if path == "/api/fixture/control":
             f = MGR.find(body.get("id"))
-            if f:
-                MGR.manual_control(f, body)
-            return self._send(200, {"ok": bool(f)})
+            if not f:
+                return self._send(200, {"ok": False, "error": "Unknown fixture."})
+            ip = MGR.manual_control(f, body)
+            return self._send(200, {"ok": True, "ip": ip})
 
         if path == "/api/fixture/release":
             f = MGR.find(body.get("id"))
@@ -935,7 +942,7 @@ function renderBulbs(){
         <button class=ghost onclick="rename('${x.id}')">Save name</button>
         <button class=act onclick="ident('${x.id}')">Identify</button>
         <span class=pill>${x.ip||'?'}</span>
-        ${x.manual?'<span class="pill bad">manual</span>':''}
+        ${x.manual?'<span class=pill title="Web UI is driving this bulb instead of QLab. Click Release to QLab to hand it back.">web control</span>':''}
       </div>
       <div class=row style="margin-top:10px">
         <label class=fld>Color<input type=color id="col_${x.id}" value="#ffffff"></label>
@@ -962,12 +969,12 @@ async function release(id){await api('/api/fixture/release',{id});toast('Back on
 async function blackout(on){await api('/api/blackout',{on});toast(on?'Blackout':'Resumed')}
 async function control(id){
   const [r,g,b]=hexToRgb(document.getElementById('col_'+id).value);
-  await api('/api/fixture/control',{id,r,g,b,a:0,
+  const j=await api('/api/fixture/control',{id,r,g,b,a:0,
     intensity:+document.getElementById('int_'+id).value,
     mode:document.getElementById('mode_'+id).value,
     speed:+document.getElementById('spd_'+id).value,
     strobe:+document.getElementById('strb_'+id).value});
-  toast('Applied')}
+  toast(j.ok?('Sent → '+j.ip):('Error: '+(j.error||'failed')))}
 
 function renderPatch(){
   const f=S.fixtures||[];const c=S.conflicts||[];
