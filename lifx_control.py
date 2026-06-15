@@ -852,12 +852,18 @@ def listen_artnet(fixtures, max_hz=20.0, smooth_ms=120, kelvin=3500,
             # Service every fixture each tick: static colors are throttled, native
             # effects are (re)armed on the bulb, script effects are animated.
             # Skip when globally paused or when the web UI is driving a fixture.
+            # One unreachable bulb (No route to host) must not stop the rest.
             paused = state is not None and getattr(state, "paused", False)
             if not paused:
                 for f in fixtures:
                     if f["controls"] is not None and not f.get("manual"):
-                        service_fixture(f, f["controls"], now, min_interval,
-                                        smooth_ms, verbose)
+                        try:
+                            service_fixture(f, f["controls"], now, min_interval,
+                                            smooth_ms, verbose)
+                        except OSError as exc:
+                            if verbose:
+                                print(f"[{f.get('label') or f.get('live_ip')}] "
+                                      f"send failed: {exc}")
 
             if next_rediscover and now >= next_rediscover:
                 refresh_ips(fixtures)

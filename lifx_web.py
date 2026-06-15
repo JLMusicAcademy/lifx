@@ -463,16 +463,22 @@ class Manager:
         f["manual"] = True
 
         def run():
-            st = lifx.get_state(ip)
-            for _ in range(6):
-                lifx.set_color(55, 100, 100, 5000, 0, ip)
-                time.sleep(0.22)
-                lifx.set_color(0, 0, 2, 3500, 0, ip)
-                time.sleep(0.22)
-            if st:
-                lifx.set_color(st["hue"], st["saturation"], st["brightness"],
-                               st["kelvin"], 300, ip)
-            f["manual"] = prev_manual
+            try:
+                st = lifx.get_state(ip)
+                lifx.set_power(True, 0, ip)  # SetColor won't show on a bulb that's off
+                for _ in range(6):
+                    lifx.set_color(55, 100, 100, 5000, 0, ip)
+                    time.sleep(0.22)
+                    lifx.set_color(0, 0, 2, 3500, 0, ip)
+                    time.sleep(0.22)
+                if st:  # restore the bulb's previous color and power state
+                    lifx.set_color(st["hue"], st["saturation"], st["brightness"],
+                                   st["kelvin"], 300, ip)
+                    lifx.set_power(st["power"] == "on", 300, ip)
+            except OSError as exc:
+                print(f"[web] identify {ip} failed: {exc} (bulb unreachable?)")
+            finally:
+                f["manual"] = prev_manual
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -651,7 +657,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             f = MGR.find(body.get("id"))
             if not f:
                 return self._send(200, {"ok": False, "error": "Unknown fixture."})
-            ip = MGR.manual_control(f, body)
+            try:
+                ip = MGR.manual_control(f, body)
+            except OSError as exc:
+                ip = f.get("live_ip") or f.get("ip")
+                return self._send(200, {"ok": False, "error":
+                    f"{ip} unreachable ({exc}). The bulb may be offline or its "
+                    f"IP changed — try Discover bulbs to refresh."})
             return self._send(200, {"ok": True, "ip": ip})
 
         if path == "/api/fixture/release":
