@@ -834,13 +834,26 @@ header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px
 header h1{margin:0;font-size:18px;font-weight:800;letter-spacing:-.02em;
   background:linear-gradient(90deg,var(--brand),#7a5cff);-webkit-background-clip:text;
   background-clip:text;color:transparent;white-space:nowrap}
-nav{display:flex;gap:8px;overflow-x:auto;flex:1;padding:2px;scrollbar-width:none}
-nav::-webkit-scrollbar{display:none}
-nav button{flex:0 0 auto;background:#f1f4fb;border:1px solid var(--line);color:#4a546a;
-  padding:10px 15px;border-radius:999px;cursor:pointer;font-size:15px;
-  font-weight:600;transition:.15s;box-shadow:var(--shadow-sm)}
-nav button.active{background:linear-gradient(180deg,var(--brand),var(--brand-d));
-  color:#fff;border-color:transparent;box-shadow:0 6px 16px rgba(79,124,255,.4)}
+.iconbtn{background:#f1f4fb;border:1px solid var(--line);border-radius:12px;
+  width:46px;height:46px;font-size:22px;line-height:1;cursor:pointer;color:var(--ink);
+  display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow-sm)}
+.iconbtn:active{transform:translateY(1px)}
+#drawer{position:fixed;top:0;left:0;height:100%;width:268px;max-width:82vw;z-index:40;
+  background:var(--card);border-right:1px solid var(--line);box-shadow:var(--shadow);
+  transform:translateX(-100%);transition:transform .22s ease;padding:14px 12px;
+  display:flex;flex-direction:column;gap:6px;overflow-y:auto}
+#drawer.open{transform:translateX(0)}
+#drawer .brand{font-size:17px;font-weight:800;letter-spacing:-.02em;padding:8px 14px 12px;
+  color:var(--ink)}
+#drawer button{width:100%;text-align:left;background:transparent;border:0;color:var(--ink);
+  padding:14px 16px;border-radius:12px;font-size:17px;font-weight:600;cursor:pointer;
+  min-height:50px}
+#drawer button:hover{background:#f1f4fb}
+#drawer button.active{background:linear-gradient(180deg,var(--brand),var(--brand-d));
+  color:#fff;box-shadow:0 6px 16px rgba(79,124,255,.4)}
+#backdrop{position:fixed;inset:0;background:rgba(20,28,46,.42);z-index:30;opacity:0;
+  pointer-events:none;transition:opacity .22s}
+#backdrop.open{opacity:1;pointer-events:auto}
 main{padding:16px;max-width:980px;margin:0 auto}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
   padding:18px;margin-bottom:16px;box-shadow:var(--shadow)}
@@ -918,11 +931,13 @@ APP_HTML = """<!doctype html><html><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
 <title>LIFX DMX Bridge</title>""" + _STYLE + """</head><body>
 <header>
+  <button class=iconbtn onclick=toggleMenu() aria-label=Menu>&#9776;</button>
   <h1>LIFX DMX Bridge</h1>
-  <nav id=nav></nav>
   <span style="flex:1"></span>
   <button class=ghost onclick=logout()>Sign out</button>
 </header>
+<div id=backdrop onclick=closeMenu()></div>
+<aside id=drawer></aside>
 <main id=view></main>
 <div id=toast class=toast></div>
 <script>
@@ -935,9 +950,18 @@ async function api(p,b){const r=await fetch(p,{method:b?'POST':'GET',
   if(r.status===401){location.reload();return{}}return r.json()}
 async function logout(){await api('/api/logout',{});location.reload()}
 let tab='Bulbs';
-function setTab(t){tab=t;render();drawNav()}
-function drawNav(){nav.innerHTML='';tabs.forEach(t=>{const b=document.createElement('button');
-  b.textContent=t;b.className=t===tab?'active':'';b.onclick=()=>setTab(t);nav.appendChild(b)})}
+function setTab(t){tab=t;render();drawNav();closeMenu()}
+function drawNav(){
+  const d=document.getElementById('drawer');
+  d.innerHTML='<div class=brand>LIFX DMX Bridge</div>';
+  tabs.forEach(t=>{const b=document.createElement('button');
+    b.textContent=t;b.className=t===tab?'active':'';b.onclick=()=>setTab(t);d.appendChild(b)})}
+function toggleMenu(){
+  document.getElementById('drawer').classList.toggle('open');
+  document.getElementById('backdrop').classList.toggle('open')}
+function closeMenu(){
+  document.getElementById('drawer').classList.remove('open');
+  document.getElementById('backdrop').classList.remove('open')}
 async function refresh(){S=await api('/api/state');render()}
 
 function render(){
