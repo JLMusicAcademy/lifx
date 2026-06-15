@@ -640,8 +640,18 @@ def local_ip():
         sock.close()
 
 
-def build_artpoll_reply(node_ip, universe):
-    """Minimal ArtPollReply so the bridge shows up as a node to Art-Net tools."""
+def build_artpoll_reply(node_ip, universes):
+    """ArtPollReply advertising the output universes this bridge handles.
+
+    `universes` is an iterable of universe numbers in use. A single reply can
+    advertise up to 4 ports that share the same Net/Sub-Net (i.e. universes that
+    differ only in the low nibble, such as 0..15). Controllers that unicast
+    Art-Net only send the universes a node advertises, so this must list them
+    all or extra universes never arrive.
+    """
+    unis = sorted(set(universes))[:4] or [0]
+    net = (unis[0] >> 8) & 0x7f
+    sub = (unis[0] >> 4) & 0x0f
     pkt = bytearray(239)
     pkt[0:8] = ARTNET_ID
     struct.pack_into("<H", pkt, 8, OP_POLL_REPLY)
@@ -651,15 +661,16 @@ def build_artpoll_reply(node_ip, universe):
         pass
     struct.pack_into("<H", pkt, 14, ARTNET_PORT)  # port (low byte first)
     pkt[17] = 14                                    # firmware version low
-    pkt[18] = (universe >> 8) & 0x7f                # NetSwitch
-    pkt[19] = (universe >> 4) & 0x0f                # SubSwitch
+    pkt[18] = net                                   # NetSwitch
+    pkt[19] = sub                                   # SubSwitch
     short, long_ = b"LIFX-LAN", b"LIFX LAN Art-Net bridge"
     pkt[26:26 + len(short)] = short
     pkt[44:44 + len(long_)] = long_
-    pkt[173] = 1                                     # NumPortsLo = 1
-    pkt[174] = 0x80                                  # PortType[0]: DMX output
-    pkt[182] = 0x80                                  # GoodOutput[0]: transmitting
-    pkt[190] = universe & 0x0f                       # SwOut[0]
+    pkt[173] = len(unis)                            # NumPortsLo
+    for i, u in enumerate(unis):
+        pkt[174 + i] = 0x80                         # PortType[i]: DMX output
+        pkt[182 + i] = 0x80                         # GoodOutput[i]: transmitting
+        pkt[190 + i] = u & 0x0f                     # SwOut[i]: universe low nibble
     return bytes(pkt)
 
 
@@ -846,7 +857,7 @@ def listen_artnet(fixtures, max_hz=20.0, smooth_ms=120, kelvin=3500,
                                 f["controls"] = decode_controls(dmx, i, kelvin)
                     elif opcode == OP_POLL and poll_reply:
                         reply = build_artpoll_reply(
-                            node_ip, fixtures[0]["universe"] if fixtures else 0)
+                            node_ip, by_universe.keys() or [0])
                         sock.sendto(reply, (addr[0], ARTNET_PORT))
 
             # Service every fixture each tick: static colors are throttled, native
