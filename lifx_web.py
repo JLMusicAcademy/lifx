@@ -338,17 +338,25 @@ class Manager:
         self.thread = None
         self.bind_error = None
 
+    # Only these fields belong in the saved map. Everything else on a fixture
+    # dict (manual, live_ip, controls, last_send, armed, ...) is runtime state
+    # and must NOT be persisted, or stale flags survive restarts.
+    STABLE_FIELDS = ("label", "ip", "mac", "universe", "address", "group")
+
     def _load_map(self):
         data = load_json(MAP_FILE, {"fixtures": []})
-        fixtures = data.get("fixtures", [])
-        for f in fixtures:
-            f.setdefault("group", "")
-            f.setdefault("live_ip", f.get("ip"))
+        fixtures = []
+        for f in data.get("fixtures", []):
+            clean = {k: f.get(k) for k in self.STABLE_FIELDS}
+            clean["group"] = clean.get("group") or ""
+            clean["live_ip"] = f.get("live_ip") or f.get("ip")
+            fixtures.append(clean)
         return fixtures
 
     def save(self):
+        fixtures = [{k: f.get(k) for k in self.STABLE_FIELDS} for f in self.fixtures]
         save_json(MAP_FILE, {"channels_per_fixture": lifx.CHANNELS_PER_FIXTURE,
-                             "fixtures": self.fixtures})
+                             "fixtures": fixtures})
 
     def save_settings(self):
         save_json(SETTINGS_FILE, self.settings)
@@ -672,6 +680,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 MGR.release(f)
             return self._send(200, {"ok": bool(f)})
 
+        if path == "/api/release-all":
+            for f in MGR.fixtures:
+                f["manual"] = False
+            return self._send(200, {"ok": True})
+
         if path == "/api/fixture/remove":
             f = MGR.find(body.get("id"))
             if f:
@@ -945,6 +958,7 @@ function renderBulbs(){
     <button class=act onclick=discover()>Discover bulbs</button>
     <button class=ghost onclick="blackout(true)">Blackout</button>
     <button class=ghost onclick="blackout(false)">Resume</button>
+    <button class=ghost onclick="releaseAll()">Release all to QLab</button>
     <span class=muted>${f.length} bulb(s)</span></div></div>`;
   if(!f.length)h+=`<div class=card class=muted>No bulbs yet. Click <b>Discover bulbs</b>.</div>`;
   f.forEach(x=>{
@@ -978,6 +992,7 @@ async function discover(){toast('Scanning…');const j=await api('/api/discover'
 async function rename(id){await api('/api/fixture/rename',{id,label:document.getElementById('lbl_'+id).value});toast('Saved');refresh()}
 async function ident(id){await api('/api/fixture/identify',{id});toast('Flashing bulb…')}
 async function release(id){await api('/api/fixture/release',{id});toast('Back on QLab');refresh()}
+async function releaseAll(){await api('/api/release-all',{});toast('All bulbs back on QLab');refresh()}
 async function blackout(on){await api('/api/blackout',{on});toast(on?'Blackout':'Resumed')}
 async function control(id){
   const [r,g,b]=hexToRgb(document.getElementById('col_'+id).value);
