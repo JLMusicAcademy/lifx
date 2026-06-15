@@ -594,10 +594,20 @@ def listen_artnet(fixtures, max_hz=20.0, smooth_ms=120, kelvin=3500,
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    # SO_REUSEPORT lets the bridge share UDP 6454 with another Art-Net app on
+    # the same machine (e.g. QLab running on the same Mac). Not on every OS.
+    if hasattr(socket, "SO_REUSEPORT"):
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        except OSError:
+            pass
     try:
         sock.bind((bind_host, ARTNET_PORT))
     except OSError as exc:
-        sys.exit(f"Could not bind Art-Net port {ARTNET_PORT}: {exc}")
+        sys.exit(
+            f"Could not bind Art-Net port {ARTNET_PORT}: {exc}\n"
+            f"Another app is using it. Find it with:  lsof -nP -i UDP:{ARTNET_PORT}\n"
+            f"If it's a stale copy of this script:    pkill -f 'lifx_control.*listen'")
     node_ip = local_ip()
 
     # Index fixtures by universe and init per-fixture effect state.
