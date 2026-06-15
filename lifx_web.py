@@ -412,6 +412,8 @@ class Manager:
             if b["mac"] in known:
                 known[b["mac"]]["live_ip"] = b["ip"]
                 known[b["mac"]]["ip"] = b["ip"]
+                if b.get("label"):  # pick up renames made in the LIFX app
+                    known[b["mac"]]["label"] = b["label"]
             else:
                 self.fixtures.append({**b, "group": "", "universe": 0,
                                       "address": 0, "live_ip": b["ip"]})
@@ -642,7 +644,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/fixture/rename":
             f = MGR.find(body.get("id"))
             if f:
-                f["label"] = body.get("label", "")[:48]
+                name = body.get("label", "")[:32]
+                f["label"] = name
+                try:  # write the name onto the bulb itself (best effort)
+                    lifx.set_label(f.get("live_ip") or f.get("ip"), name)
+                except OSError:
+                    pass
                 MGR.save()
             return self._send(200, {"ok": bool(f)})
 
@@ -992,7 +999,8 @@ function renderBulbs(){
   f.forEach(x=>{
     h+=`<div class=card>
       <div class=row>
-        <input value="${esc(x.label)}" id="lbl_${x.id}" placeholder="Name (e.g. Entrance)" style="flex:1">
+        <input value="${esc(x.label)}" id="lbl_${x.id}" placeholder="Name (e.g. Entrance)" style="flex:1"
+          onchange="rename('${x.id}')" onkeydown="if(event.key==='Enter')this.blur()">
         <button class=ghost onclick="rename('${x.id}')">Save name</button>
         <button class=act onclick="ident('${x.id}')">Identify</button>
         <span class=pill>${x.ip||'?'}</span>
@@ -1017,7 +1025,11 @@ function renderBulbs(){
 function hexToRgb(h){return [parseInt(h.substr(1,2),16),parseInt(h.substr(3,2),16),parseInt(h.substr(5,2),16)]}
 async function discover(){toast('Scanning…');const j=await api('/api/discover',{timeout:3});
   toast(`Found ${j.found}, added ${j.added}`);refresh()}
-async function rename(id){await api('/api/fixture/rename',{id,label:document.getElementById('lbl_'+id).value});toast('Saved');refresh()}
+async function rename(id){
+  const v=document.getElementById('lbl_'+id).value;
+  await api('/api/fixture/rename',{id,label:v});
+  const fx=(S.fixtures||[]).find(x=>x.id===id);if(fx)fx.label=v;  // keep cache in sync
+  toast('Name saved')}
 async function ident(id){await api('/api/fixture/identify',{id});toast('Flashing bulb…')}
 async function release(id){await api('/api/fixture/release',{id});toast('Back on QLab');refresh()}
 async function releaseAll(){await api('/api/release-all',{});toast('All bulbs back on QLab');refresh()}
