@@ -851,6 +851,9 @@ header h1{margin:0;font-size:18px;font-weight:800;letter-spacing:-.02em;
 #drawer button:hover{background:#f1f4fb}
 #drawer button.active{background:linear-gradient(180deg,var(--brand),var(--brand-d));
   color:#fff;box-shadow:0 6px 16px rgba(79,124,255,.4)}
+#drawer button.signout{margin-top:auto;color:var(--bad);border-top:1px solid var(--line);
+  border-radius:0 0 12px 12px}
+#drawer button.signout:hover{background:#fdecea}
 #backdrop{position:fixed;inset:0;background:rgba(20,28,46,.42);z-index:30;opacity:0;
   pointer-events:none;transition:opacity .22s}
 #backdrop.open{opacity:1;pointer-events:auto}
@@ -933,8 +936,6 @@ APP_HTML = """<!doctype html><html><head><meta charset=utf-8>
 <header>
   <button class=iconbtn onclick=toggleMenu() aria-label=Menu>&#9776;</button>
   <h1>LIFX DMX Bridge</h1>
-  <span style="flex:1"></span>
-  <button class=ghost onclick=logout()>Sign out</button>
 </header>
 <div id=backdrop onclick=closeMenu()></div>
 <aside id=drawer></aside>
@@ -942,7 +943,7 @@ APP_HTML = """<!doctype html><html><head><meta charset=utf-8>
 <div id=toast class=toast></div>
 <script>
 let S={};
-const tabs=['Bulbs','Patch','Effects','Monitor','Maintenance','Network','Settings','Help'];
+const tabs=['Bulbs','Patch','Effects','Monitor','Maintenance','Network','Settings','Profile','Help'];
 function toast(m){const t=document.getElementById('toast');t.textContent=m;
   t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1800)}
 async function api(p,b){const r=await fetch(p,{method:b?'POST':'GET',
@@ -955,7 +956,9 @@ function drawNav(){
   const d=document.getElementById('drawer');
   d.innerHTML='<div class=brand>LIFX DMX Bridge</div>';
   tabs.forEach(t=>{const b=document.createElement('button');
-    b.textContent=t;b.className=t===tab?'active':'';b.onclick=()=>setTab(t);d.appendChild(b)})}
+    b.textContent=t;b.className=t===tab?'active':'';b.onclick=()=>setTab(t);d.appendChild(b)});
+  const out=document.createElement('button');
+  out.textContent='Sign out';out.className='signout';out.onclick=logout;d.appendChild(out)}
 function toggleMenu(){
   document.getElementById('drawer').classList.toggle('open');
   document.getElementById('backdrop').classList.toggle('open')}
@@ -972,6 +975,7 @@ function render(){
   if(tab==='Maintenance')return renderMaint();
   if(tab==='Network')return renderNetwork();
   if(tab==='Settings')return renderSettings();
+  if(tab==='Profile')return renderProfile();
   if(tab==='Help')return renderHelp();
 }
 function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
@@ -1173,7 +1177,11 @@ function renderSettings(){
    <label class=fld>Rediscover (s, 0=off)<input id=s_rd value="${s.rediscover}"></label>
    <label class=fld>Bind host<input id=s_bh value="${s.bind_host}"></label>
   </div><button class=act style="margin-top:12px" onclick=saveSettings()>Save</button>
-  <span class=muted>Restart the listener (Monitor tab) to apply.</span></div>
+  <span class=muted>Restart the listener (Monitor tab) to apply.</span></div>`;
+}
+function renderProfile(){
+  view.innerHTML=`<div class=card><h2>Profile</h2>
+   <p class=muted>Signed in as <b>admin</b>.</p></div>
   <div class=card><h2>Change password</h2><div class=row>
    <label class=fld>Current<input id=pw_c type=password></label>
    <label class=fld>New (6+ chars)<input id=pw_n type=password></label>
