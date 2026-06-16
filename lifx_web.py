@@ -1187,12 +1187,35 @@ function renderEffects(){
   <tr><td>70–99</td><td>Triangle</td><td>bulb firmware</td></tr>
   <tr><td>100–129</td><td>Saw</td><td>bulb firmware</td></tr>
   <tr><td>130–169</td><td>Color pulse</td><td>bulb firmware</td></tr>
-  <tr><td>170–209</td><td>Rainbow cycle</td><td>script-generated</td></tr>
-  <tr><td>210–239</td><td>Color loop</td><td>script-generated</td></tr>
-  <tr><td>240–255</td><td>Candle flicker</td><td>script-generated</td></tr></table></div>
+  <tr><td>170–209</td><td>Rainbow cycle</td><td><b>script-generated</b></td></tr>
+  <tr><td>210–239</td><td>Color loop</td><td><b>script-generated</b></td></tr>
+  <tr><td>240–255</td><td>Candle flicker</td><td><b>script-generated</b></td></tr></table></div>
   <p class=muted>ch+6 = Effect Speed (slow→fast). ch+7 = Strobe overlay (0=off),
   which takes priority over the mode. Native firmware effects cost almost no
-  network traffic; script effects stream at the rate cap.</p></div>`;
+  network traffic; script effects stream at the rate cap.</p>
+  <details style="margin-top:14px">
+    <summary style="cursor:pointer;font-weight:650">What does “script-generated” mean?</summary>
+    <div style="margin-top:10px;line-height:1.55">
+      <p>It’s about <b>where the animation is computed</b>. Effects come from one of two engines:</p>
+      <p><b>Bulb firmware</b> (Breathe, Pulse, Triangle, Saw, Color pulse).
+      The bridge sends the bulb a single waveform command and the bulb’s own chip
+      animates it. The bridge only re-arms it occasionally, so it costs
+      <b>almost no network traffic</b> and keeps running even if the bridge pauses.</p>
+      <p><b>Script-generated</b> (Rainbow, Color loop, Candle). LIFX firmware has no
+      native version of these, so <b>the bridge computes every frame itself</b> and
+      streams a continuous series of color updates to the bulb:</p>
+      <ul style="margin:6px 0 6px 18px">
+        <li><b>Rainbow</b> — advances a hue angle over time (≈6–180°/sec, set by Speed) for a smooth hue sweep.</li>
+        <li><b>Color loop</b> — steps through a fixed palette, one color per step, dwell time set by Speed.</li>
+        <li><b>Candle</b> — randomly flickers a dimmed warm hue every ~80&nbsp;ms.</li>
+      </ul>
+      <p>Because the bridge pushes these frames over the network (up to the rate cap,
+      ~20&nbsp;updates/sec per bulb), script effects are the <b>bandwidth-heavy</b>
+      ones. On a large rig, running many bulbs in Rainbow/Loop/Candle at once is what
+      saturates the network — firmware effects scale far more cheaply. Script effects
+      also stop if the bridge stops; firmware effects keep going on the bulb.</p>
+    </div>
+  </details></div>`;
 }
 
 function renderMonitor(){
