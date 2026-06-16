@@ -901,6 +901,28 @@ input[type=range]{padding:0;box-shadow:none;accent-color:var(--brand)}
 .sw{width:32px;height:32px;border-radius:9px;border:2px solid #fff;padding:0;cursor:pointer;
   box-shadow:var(--shadow-sm)}
 .sw:active{transform:translateY(1px)}
+/* Compact accordion list of bulbs */
+.bulb{border-bottom:1px solid var(--line)}
+.bulb:last-child{border-bottom:0}
+.bulbhead{display:flex;align-items:center;gap:11px;padding:14px 12px;cursor:pointer;
+  user-select:none;min-height:56px}
+.bulbhead:hover{background:#f6f8fc;border-radius:12px}
+.cdot{width:22px;height:22px;border-radius:50%;border:2px solid #fff;flex:0 0 auto;
+  box-shadow:0 0 0 1px var(--line),var(--shadow-sm)}
+.bname{font-weight:650;font-size:16px}
+.chev{font-size:22px;color:var(--muted);transition:transform .2s}
+.bulb.open .chev{transform:rotate(90deg)}
+.bulbbody{display:none;padding:4px 12px 18px}
+.bulb.open .bulbbody{display:block}
+.colorsq{width:60px;height:60px;border-radius:14px;cursor:pointer;border:3px solid #fff;
+  box-shadow:0 0 0 1px var(--line),var(--shadow-sm)}
+.colorsq:active{transform:translateY(1px)}
+/* Modal */
+.modal{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;
+  background:rgba(20,28,46,.5);padding:18px}
+.modal.open{display:flex}
+.modalcard{background:var(--card);border-radius:20px;padding:22px;box-shadow:var(--shadow);
+  display:flex;flex-direction:column;align-items:center;max-width:92vw}
 label.fld{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:600;
   color:var(--muted);min-width:120px}
 .pill{font-size:13px;padding:4px 11px;border-radius:999px;background:#eef2fb;
@@ -958,6 +980,14 @@ APP_HTML = """<!doctype html><html><head><meta charset=utf-8>
 <div id=backdrop onclick=closeMenu()></div>
 <aside id=drawer></aside>
 <main id=view></main>
+<div id=picker class=modal onclick="if(event.target===this)closePicker()">
+  <div class=modalcard>
+    <h2 style="text-align:center">Pick a colour</h2>
+    <div class=wheel id=pwheel><div class=wmark id=pmark></div></div>
+    <div class=swatches id=pswatches style="max-width:none;justify-content:center"></div>
+    <button class=act style="width:100%;margin-top:16px" onclick=closePicker()>Done</button>
+  </div>
+</div>
 <div id=toast class=toast></div>
 <script>
 let S={};
@@ -998,6 +1028,20 @@ function render(){
 }
 function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 
+// Compact accordion: one row per bulb; click to expand its settings. The colour
+// square in the expanded panel opens a modal HSV wheel. picks[id]={h:0-360,s:0-1}.
+const picks={};
+let expandedId=null;
+const SW=[['Red',0,1],['Amber',40,1],['Yellow',60,1],['Green',120,1],['Cyan',180,1],
+  ['Blue',240,1],['Purple',280,1],['Pink',320,1],['White',0,0]];
+function hsvToRgb(h,s,v){
+  const c=v*s, x=c*(1-Math.abs((h/60)%2-1)), m=v-c; let r,g,b;
+  if(h<60){r=c;g=x;b=0}else if(h<120){r=x;g=c;b=0}else if(h<180){r=0;g=c;b=x}
+  else if(h<240){r=0;g=x;b=c}else if(h<300){r=x;g=0;b=c}else{r=c;g=0;b=x}
+  return [Math.round((r+m)*255),Math.round((g+m)*255),Math.round((b+m)*255)]}
+function swCss(h,s){const[r,g,b]=hsvToRgb(h,s,1);return `rgb(${r},${g},${b})`}
+function colOf(id){const p=picks[id]||{h:0,s:0};return swCss(p.h,p.s)}
+
 function renderBulbs(){
   const f=S.fixtures||[];
   let h=`<div class=card><div class=row>
@@ -1007,68 +1051,76 @@ function renderBulbs(){
     <button class=ghost onclick="releaseAll()">Release all to QLab</button>
     <span class=muted>${f.length} bulb(s)</span></div></div>`;
   if(!f.length)h+=`<div class=card class=muted>No bulbs yet. Click <b>Discover bulbs</b>.</div>`;
+  if(f.length)h+=`<div class=card style="padding:6px">`;
   f.forEach(x=>{
-    h+=`<div class=card>
-      <div class=row>
-        <input value="${esc(x.label)}" id="lbl_${x.id}" placeholder="Name (e.g. Entrance)" style="flex:1"
-          onchange="rename('${x.id}')" onkeydown="if(event.key==='Enter')this.blur()">
-        <button class=ghost onclick="rename('${x.id}')">Save name</button>
-        <button class=act onclick="ident('${x.id}')">Identify</button>
+    h+=`<div class=bulb id="bulb_${x.id}">
+      <div class=bulbhead onclick="toggleBulb('${x.id}')">
+        <span class=cdot id="cdot_${x.id}" style="background:${colOf(x.id)}"></span>
+        <span class=bname>${esc(x.label)||'<span class=muted>'+(x.ip||'?')+'</span>'}</span>
         <span class=pill>${x.ip||'?'}</span>
-        ${x.manual?'<span class=pill title="Web UI is driving this bulb instead of QLab. Click Release to QLab to hand it back.">web control</span>':''}
+        ${x.manual?'<span class=pill title="Web UI is driving this bulb instead of QLab.">web</span>':''}
+        <span style="flex:1"></span><span class=chev>&#8250;</span>
       </div>
-      <div class=row style="margin-top:12px;align-items:flex-start">
-        <div>
-          <div class=wheel id="wh_${x.id}" data-id="${x.id}"><div class=wmark id="wm_${x.id}"></div></div>
-          <div class=swatches>${SW.map(s=>`<button class=sw title="${s[0]}" style="background:${swCss(s[1],s[2])}" onclick="pickSwatch('${x.id}',${s[1]},${s[2]})"></button>`).join('')}</div>
+      <div class=bulbbody>
+        <div class=row>
+          <input value="${esc(x.label)}" id="lbl_${x.id}" placeholder="Name (e.g. Entrance)" style="flex:1"
+            onchange="rename('${x.id}')" onkeydown="if(event.key==='Enter')this.blur()">
+          <button class=act onclick="ident('${x.id}')">Identify</button>
         </div>
-        <div style="flex:1;min-width:210px">
-          <label class=fld>Intensity<input type=range min=0 max=255 value=255 id="int_${x.id}" onchange="control('${x.id}')"></label>
-          <label class=fld style="margin-top:10px">Mode<select id="mode_${x.id}" onchange="control('${x.id}')">
+        <div class=row style="margin-top:12px;align-items:center">
+          <div>
+            <div class=muted style="font-size:13px;margin-bottom:5px">Colour</div>
+            <div class=colorsq id="cs_${x.id}" style="background:${colOf(x.id)}" onclick="openPicker('${x.id}')"></div>
+          </div>
+          <label class=fld style="flex:1;min-width:160px">Intensity<input type=range min=0 max=255 value=255 id="int_${x.id}" onchange="control('${x.id}')"></label>
+        </div>
+        <div class=row style="margin-top:12px">
+          <label class=fld>Mode<select id="mode_${x.id}" onchange="control('${x.id}')">
             <option value=static>Static</option><option value=breathe>Breathe</option>
             <option value=pulse>Pulse</option><option value=rainbow>Rainbow</option>
             <option value=color_loop>Color loop</option><option value=candle>Candle</option>
           </select></label>
-          <label class=fld style="margin-top:10px">Speed<input type=range min=0 max=255 value=128 id="spd_${x.id}" onchange="control('${x.id}')"></label>
-          <label class=fld style="margin-top:10px">Strobe<input type=range min=0 max=255 value=0 id="strb_${x.id}" onchange="control('${x.id}')"></label>
-          <div class=row style="margin-top:12px">
-            <button class=act onclick="control('${x.id}')">Apply</button>
-            <button class=ghost onclick="release('${x.id}')">Release to QLab</button>
-          </div>
+          <label class=fld>Speed<input type=range min=0 max=255 value=128 id="spd_${x.id}" onchange="control('${x.id}')"></label>
+          <label class=fld>Strobe<input type=range min=0 max=255 value=0 id="strb_${x.id}" onchange="control('${x.id}')"></label>
+        </div>
+        <div class=row style="margin-top:12px">
+          <button class=act onclick="control('${x.id}')">Apply</button>
+          <button class=ghost onclick="release('${x.id}')">Release to QLab</button>
         </div>
       </div></div>`;
   });
+  if(f.length)h+=`</div>`;
   view.innerHTML=h;
-  wireWheels();
+  if(expandedId){const el=document.getElementById('bulb_'+expandedId);if(el)el.classList.add('open')}
 }
-// HSV color wheel: hue around the ring, saturation toward the centre. Brightness
-// comes from the Intensity slider. picks[id] = {h:0-360, s:0-1}.
-const picks={};
-const SW=[['Red',0,1],['Amber',40,1],['Yellow',60,1],['Green',120,1],['Cyan',180,1],
-  ['Blue',240,1],['Purple',280,1],['Pink',320,1],['White',0,0]];
-function hsvToRgb(h,s,v){
-  const c=v*s, x=c*(1-Math.abs((h/60)%2-1)), m=v-c; let r,g,b;
-  if(h<60){r=c;g=x;b=0}else if(h<120){r=x;g=c;b=0}else if(h<180){r=0;g=c;b=x}
-  else if(h<240){r=0;g=x;b=c}else if(h<300){r=x;g=0;b=c}else{r=c;g=0;b=x}
-  return [Math.round((r+m)*255),Math.round((g+m)*255),Math.round((b+m)*255)]}
-function swCss(h,s){const[r,g,b]=hsvToRgb(h,s,1);return `rgb(${r},${g},${b})`}
-function moveMark(id){const p=picks[id]||{h:0,s:0};const m=document.getElementById('wm_'+id);
+function toggleBulb(id){
+  const same=expandedId===id;
+  document.querySelectorAll('.bulb').forEach(el=>el.classList.remove('open'));
+  expandedId=same?null:id;
+  if(expandedId){const el=document.getElementById('bulb_'+id);if(el)el.classList.add('open')}}
+function updateSquares(id){const c=colOf(id);
+  ['cs_','cdot_'].forEach(p=>{const e=document.getElementById(p+id);if(e)e.style.background=c})}
+
+// --- Modal colour picker (single shared wheel) ---
+let modalId=null;
+function pmove(){const p=picks[modalId]||{h:0,s:0};const m=document.getElementById('pmark');
   if(!m)return;const a=p.h*Math.PI/180;
   m.style.left=(50+p.s*50*Math.sin(a))+'%';m.style.top=(50-p.s*50*Math.cos(a))+'%'}
-function pickSwatch(id,h,s){picks[id]={h,s};moveMark(id);control(id)}
-function wireWheels(){
-  document.querySelectorAll('.wheel').forEach(w=>{
-    const id=w.dataset.id;let drag=false;
-    const pick=e=>{const r=w.getBoundingClientRect();
-      const pt=e.touches?e.touches[0]:e;
-      const dx=pt.clientX-(r.left+r.width/2), dy=pt.clientY-(r.top+r.height/2);
-      const sat=Math.min(1,Math.hypot(dx,dy)/(r.width/2));
-      const hue=(Math.atan2(dx,-dy)*180/Math.PI+360)%360;
-      picks[id]={h:hue,s:sat};moveMark(id)};
-    w.addEventListener('pointerdown',e=>{drag=true;w.setPointerCapture(e.pointerId);pick(e)});
-    w.addEventListener('pointermove',e=>{if(drag)pick(e)});
-    w.addEventListener('pointerup',()=>{drag=false;control(id)});
-    moveMark(id)})}
+function openPicker(id){modalId=id;document.getElementById('picker').classList.add('open');pmove()}
+function closePicker(){document.getElementById('picker').classList.remove('open')}
+function pickSwatchModal(hh,ss){picks[modalId]={h:hh,s:ss};pmove();updateSquares(modalId);control(modalId)}
+function wirePicker(){
+  document.getElementById('pswatches').innerHTML=SW.map(s=>
+    `<button class=sw title="${s[0]}" style="background:${swCss(s[1],s[2])}" onclick="pickSwatchModal(${s[1]},${s[2]})"></button>`).join('');
+  const w=document.getElementById('pwheel');let drag=false;
+  const pick=e=>{const r=w.getBoundingClientRect();const pt=e.touches?e.touches[0]:e;
+    const dx=pt.clientX-(r.left+r.width/2), dy=pt.clientY-(r.top+r.height/2);
+    const sat=Math.min(1,Math.hypot(dx,dy)/(r.width/2));
+    const hue=(Math.atan2(dx,-dy)*180/Math.PI+360)%360;
+    picks[modalId]={h:hue,s:sat};pmove();updateSquares(modalId)};
+  w.addEventListener('pointerdown',e=>{drag=true;w.setPointerCapture(e.pointerId);pick(e)});
+  w.addEventListener('pointermove',e=>{if(drag)pick(e)});
+  w.addEventListener('pointerup',()=>{drag=false;control(modalId)})}
 async function discover(){toast('Scanning…');const j=await api('/api/discover',{timeout:3});
   toast(`Found ${j.found}, added ${j.added}`);refresh()}
 async function rename(id){
@@ -1082,6 +1134,7 @@ async function releaseAll(){await api('/api/release-all',{});toast('All bulbs ba
 async function blackout(on){await api('/api/blackout',{on});toast(on?'Blackout':'Resumed')}
 async function control(id){
   const p=picks[id]||{h:0,s:0};const [r,g,b]=hsvToRgb(p.h,p.s,1);
+  updateSquares(id);
   const j=await api('/api/fixture/control',{id,r,g,b,a:0,
     intensity:+document.getElementById('int_'+id).value,
     mode:document.getElementById('mode_'+id).value,
@@ -1266,7 +1319,7 @@ function renderHelp(){
   <p class=muted>Channels per fixture: 8. A 512-channel universe holds 64 bulbs.</p></div>`;
 }
 
-drawNav();refresh();
+drawNav();wirePicker();refresh();
 // Only the Monitor tab needs live polling. Never re-render while the user is
 // interacting with a field (that was closing dropdowns mid-click).
 setInterval(()=>{
