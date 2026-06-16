@@ -994,7 +994,7 @@ APP_HTML = """<!doctype html><html><head><meta charset=utf-8>
 <div id=toast class=toast></div>
 <script>
 let S={};
-const tabs=['Bulbs','Patch','Effects','Monitor','Maintenance','Network','Settings','Profile','Help'];
+const tabs=['Bulbs','Patch','Effects','Maintenance','Settings','Profile','Help'];
 function toast(m){const t=document.getElementById('toast');t.textContent=m;
   t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1800)}
 async function api(p,b){const r=await fetch(p,{method:b?'POST':'GET',
@@ -1022,9 +1022,7 @@ function render(){
   if(tab==='Bulbs')return renderBulbs();
   if(tab==='Patch')return renderPatch();
   if(tab==='Effects')return renderEffects();
-  if(tab==='Monitor')return renderMonitor();
   if(tab==='Maintenance')return renderMaint();
-  if(tab==='Network')return renderNetwork();
   if(tab==='Settings')return renderSettings();
   if(tab==='Profile')return renderProfile();
   if(tab==='Help')return renderHelp();
@@ -1218,7 +1216,7 @@ function renderEffects(){
   </details></div>`;
 }
 
-function renderMonitor(){
+function monitorHtml(){
   const L=S.listener||{};const m=S.monitor||{};
   let h=`<div class=card><h2>Listener status</h2>
   <p>Art-Net port ${L.port}: <b class="${L.running?'ok':'bad'}">${L.running?'listening':'stopped'}</b>
@@ -1236,7 +1234,7 @@ function renderMonitor(){
     h+=`<p><b>Universe ${uni}</b><br><span class=muted style="font-family:monospace;font-size:12px">
       ${vals.map((v,i)=>String(v).padStart(3)).join(' ')}</span></p>`;
   }
-  h+=`</div>`;view.innerHTML=h;
+  h+=`</div>`;return h;
 }
 async function listener(action){const j=await api('/api/listener',{action});
   toast('Listener '+action);if(j.error)toast(j.error);refresh()}
@@ -1280,8 +1278,10 @@ async function pushName(id){await api('/api/fixture/push-name',
 async function setGroup(id){await api('/api/fixture/group',
   {id,group:document.getElementById('mg_'+id).value});toast('Group set');refresh()}
 
-async function renderNetwork(){
+async function fillNetwork(el){
+  el.innerHTML=`<div class=card class=muted>Loading network info…</div>`;
   const n=await api('/api/network');
+  if(tab!=='Settings'||subtab!=='Network')return;  // user navigated away
   let h=`<div class=card><h2>Host network (this device)</h2>
   <p>Current IP: <b>${n.local_ip||'?'}</b> ${n.method?`· mode: ${n.method}`:''}</p>`;
   if(!n.supported){h+=`<p class=muted>${esc(n.note||'')}</p>`}
@@ -1298,7 +1298,7 @@ async function renderNetwork(){
   h+=`</div><div class=card><h2>Find a free address</h2>
    <button class=act onclick=scan()>Scan my network</button>
    <div id=scanout class=muted style="margin-top:10px"></div></div>`;
-  view.innerHTML=h;
+  el.innerHTML=h;
 }
 async function setDhcp(){const j=await api('/api/network/dhcp',{});toast(j.message||'')}
 async function setStatic(){const j=await api('/api/network/static',{
@@ -1310,18 +1310,30 @@ async function scan(){scanout.textContent='Scanning the subnet… (this takes ~1
    ${j.free_count} free.<br><b>Suggested free addresses:</b><br>
    ${j.suggestions.map(s=>`<span class=pill onclick="nipFill('${s}')" style="cursor:pointer;margin:2px">${s}</span>`).join(' ')}`;
 }
-function nipFill(ip){setTab('Network');setTimeout(()=>{const e=document.getElementById('nip');if(e)e.value=ip},50);toast('Filled '+ip)}
+function nipFill(ip){const e=document.getElementById('nip');if(e)e.value=ip;toast('Filled '+ip)}
 
+let subtab='General';
+function setSub(s){subtab=s;renderSettings()}
 function renderSettings(){
+  const subs=['General','Monitor','Network'];
+  view.innerHTML=`<div class=card style="padding:8px"><div class=row>`+
+    subs.map(s=>`<button class="${s===subtab?'act':'ghost'}" onclick="setSub('${s}')">${s}</button>`).join('')+
+    `</div></div><div id=subview></div>`;
+  const sv=document.getElementById('subview');
+  if(subtab==='Monitor')sv.innerHTML=monitorHtml();
+  else if(subtab==='Network')fillNetwork(sv);
+  else sv.innerHTML=settingsGeneralHtml();
+}
+function settingsGeneralHtml(){
   const s=S.settings||{};
-  view.innerHTML=`<div class=card><h2>Listener settings</h2><div class=flex>
+  return `<div class=card><h2>Listener settings</h2><div class=flex>
    <label class=fld>Max updates/sec per bulb<input id=s_hz value="${s.max_hz}"></label>
    <label class=fld>Smooth fade (ms)<input id=s_sm value="${s.smooth_ms}"></label>
    <label class=fld>White temp (K)<input id=s_k value="${s.kelvin}"></label>
    <label class=fld>Rediscover (s, 0=off)<input id=s_rd value="${s.rediscover}"></label>
    <label class=fld>Bind host<input id=s_bh value="${s.bind_host}"></label>
   </div><button class=act style="margin-top:12px" onclick=saveSettings()>Save</button>
-  <span class=muted>Restart the listener (Monitor tab) to apply.</span></div>`;
+  <span class=muted>Restart the listener (Monitor section) to apply.</span></div>`;
 }
 function renderProfile(){
   view.innerHTML=`<div class=card><h2>Profile</h2>
@@ -1341,13 +1353,13 @@ async function changePw(){const j=await api('/api/change-password',
 
 function renderHelp(){
   view.innerHTML=`<div class=card><h2>Quick start</h2><ol>
-  <li><b>Network tab</b> → give this device a static IP (scan to find a free one).</li>
+  <li><b>Settings → Network</b> → give this device a static IP (scan to find a free one).</li>
   <li><b>Bulbs tab</b> → Discover bulbs. Use <b>Identify</b> to flash each one and
    give it a name (Entrance, Wall, Overhead…).</li>
   <li><b>Patch tab</b> → Auto-assign addresses, fix any conflicts, Export the CSV.</li>
   <li>In QLab, patch one <b>8-channel</b> fixture per bulb at the addresses from the CSV
    (R,G,B,Amber,Intensity,Mode,Speed,Strobe).</li>
-  <li><b>Monitor tab</b> → Start the listener and confirm DMX is arriving.</li>
+  <li><b>Settings → Monitor</b> → Start the listener and confirm DMX is arriving.</li>
   </ol>
   <p class=muted>Channels per fixture: 8. A 512-channel universe holds 64 bulbs.</p></div>`;
 }
@@ -1358,7 +1370,7 @@ drawNav();wirePicker();refresh();
 setInterval(()=>{
   const a=document.activeElement;
   if(a && ['INPUT','SELECT','TEXTAREA'].includes(a.tagName))return;
-  if(tab==='Monitor')refresh();
+  if(tab==='Settings'&&subtab==='Monitor')refresh();
 },3000);
 </script></body></html>"""
 
