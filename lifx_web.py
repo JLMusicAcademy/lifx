@@ -889,7 +889,18 @@ input,select{font-family:inherit;font-size:16px;padding:12px 13px;border-radius:
 input:focus,select:focus{outline:none;border-color:var(--brand);
   box-shadow:0 0 0 4px rgba(79,124,255,.16)}
 input[type=range]{padding:0;box-shadow:none;accent-color:var(--brand)}
-input[type=color]{padding:4px;height:48px}
+.wheel{width:172px;height:172px;border-radius:50%;position:relative;cursor:crosshair;
+  touch-action:none;background:
+    radial-gradient(circle at center,#fff 0%,rgba(255,255,255,0) 72%),
+    conic-gradient(from 0deg,red,#ff0,#0f0,#0ff,#00f,#f0f,red);
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.08),var(--shadow-sm)}
+.wmark{position:absolute;left:50%;top:50%;width:20px;height:20px;border-radius:50%;
+  border:3px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.45);
+  transform:translate(-50%,-50%);pointer-events:none}
+.swatches{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px;max-width:172px}
+.sw{width:32px;height:32px;border-radius:9px;border:2px solid #fff;padding:0;cursor:pointer;
+  box-shadow:var(--shadow-sm)}
+.sw:active{transform:translateY(1px)}
 label.fld{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:600;
   color:var(--muted);min-width:120px}
 .pill{font-size:13px;padding:4px 11px;border-radius:999px;background:#eef2fb;
@@ -1006,23 +1017,58 @@ function renderBulbs(){
         <span class=pill>${x.ip||'?'}</span>
         ${x.manual?'<span class=pill title="Web UI is driving this bulb instead of QLab. Click Release to QLab to hand it back.">web control</span>':''}
       </div>
-      <div class=row style="margin-top:10px">
-        <label class=fld>Color<input type=color id="col_${x.id}" value="#ffffff"></label>
-        <label class=fld>Intensity<input type=range min=0 max=255 value=255 id="int_${x.id}"></label>
-        <label class=fld>Mode<select id="mode_${x.id}">
-          <option value=static>Static</option><option value=breathe>Breathe</option>
-          <option value=pulse>Pulse</option><option value=rainbow>Rainbow</option>
-          <option value=color_loop>Color loop</option><option value=candle>Candle</option>
-        </select></label>
-        <label class=fld>Speed<input type=range min=0 max=255 value=128 id="spd_${x.id}"></label>
-        <label class=fld>Strobe<input type=range min=0 max=255 value=0 id="strb_${x.id}"></label>
-        <button class=act onclick="control('${x.id}')">Apply</button>
-        <button class=ghost onclick="release('${x.id}')">Release to QLab</button>
+      <div class=row style="margin-top:12px;align-items:flex-start">
+        <div>
+          <div class=wheel id="wh_${x.id}" data-id="${x.id}"><div class=wmark id="wm_${x.id}"></div></div>
+          <div class=swatches>${SW.map(s=>`<button class=sw title="${s[0]}" style="background:${swCss(s[1],s[2])}" onclick="pickSwatch('${x.id}',${s[1]},${s[2]})"></button>`).join('')}</div>
+        </div>
+        <div style="flex:1;min-width:210px">
+          <label class=fld>Intensity<input type=range min=0 max=255 value=255 id="int_${x.id}" onchange="control('${x.id}')"></label>
+          <label class=fld style="margin-top:10px">Mode<select id="mode_${x.id}" onchange="control('${x.id}')">
+            <option value=static>Static</option><option value=breathe>Breathe</option>
+            <option value=pulse>Pulse</option><option value=rainbow>Rainbow</option>
+            <option value=color_loop>Color loop</option><option value=candle>Candle</option>
+          </select></label>
+          <label class=fld style="margin-top:10px">Speed<input type=range min=0 max=255 value=128 id="spd_${x.id}" onchange="control('${x.id}')"></label>
+          <label class=fld style="margin-top:10px">Strobe<input type=range min=0 max=255 value=0 id="strb_${x.id}" onchange="control('${x.id}')"></label>
+          <div class=row style="margin-top:12px">
+            <button class=act onclick="control('${x.id}')">Apply</button>
+            <button class=ghost onclick="release('${x.id}')">Release to QLab</button>
+          </div>
+        </div>
       </div></div>`;
   });
   view.innerHTML=h;
+  wireWheels();
 }
-function hexToRgb(h){return [parseInt(h.substr(1,2),16),parseInt(h.substr(3,2),16),parseInt(h.substr(5,2),16)]}
+// HSV color wheel: hue around the ring, saturation toward the centre. Brightness
+// comes from the Intensity slider. picks[id] = {h:0-360, s:0-1}.
+const picks={};
+const SW=[['Red',0,1],['Amber',40,1],['Yellow',60,1],['Green',120,1],['Cyan',180,1],
+  ['Blue',240,1],['Purple',280,1],['Pink',320,1],['White',0,0]];
+function hsvToRgb(h,s,v){
+  const c=v*s, x=c*(1-Math.abs((h/60)%2-1)), m=v-c; let r,g,b;
+  if(h<60){r=c;g=x;b=0}else if(h<120){r=x;g=c;b=0}else if(h<180){r=0;g=c;b=x}
+  else if(h<240){r=0;g=x;b=c}else if(h<300){r=x;g=0;b=c}else{r=c;g=0;b=x}
+  return [Math.round((r+m)*255),Math.round((g+m)*255),Math.round((b+m)*255)]}
+function swCss(h,s){const[r,g,b]=hsvToRgb(h,s,1);return `rgb(${r},${g},${b})`}
+function moveMark(id){const p=picks[id]||{h:0,s:0};const m=document.getElementById('wm_'+id);
+  if(!m)return;const a=p.h*Math.PI/180;
+  m.style.left=(50+p.s*50*Math.sin(a))+'%';m.style.top=(50-p.s*50*Math.cos(a))+'%'}
+function pickSwatch(id,h,s){picks[id]={h,s};moveMark(id);control(id)}
+function wireWheels(){
+  document.querySelectorAll('.wheel').forEach(w=>{
+    const id=w.dataset.id;let drag=false;
+    const pick=e=>{const r=w.getBoundingClientRect();
+      const pt=e.touches?e.touches[0]:e;
+      const dx=pt.clientX-(r.left+r.width/2), dy=pt.clientY-(r.top+r.height/2);
+      const sat=Math.min(1,Math.hypot(dx,dy)/(r.width/2));
+      const hue=(Math.atan2(dx,-dy)*180/Math.PI+360)%360;
+      picks[id]={h:hue,s:sat};moveMark(id)};
+    w.addEventListener('pointerdown',e=>{drag=true;w.setPointerCapture(e.pointerId);pick(e)});
+    w.addEventListener('pointermove',e=>{if(drag)pick(e)});
+    w.addEventListener('pointerup',()=>{drag=false;control(id)});
+    moveMark(id)})}
 async function discover(){toast('Scanning…');const j=await api('/api/discover',{timeout:3});
   toast(`Found ${j.found}, added ${j.added}`);refresh()}
 async function rename(id){
@@ -1035,7 +1081,7 @@ async function release(id){await api('/api/fixture/release',{id});toast('Back on
 async function releaseAll(){await api('/api/release-all',{});toast('All bulbs back on QLab');refresh()}
 async function blackout(on){await api('/api/blackout',{on});toast(on?'Blackout':'Resumed')}
 async function control(id){
-  const [r,g,b]=hexToRgb(document.getElementById('col_'+id).value);
+  const p=picks[id]||{h:0,s:0};const [r,g,b]=hsvToRgb(p.h,p.s,1);
   const j=await api('/api/fixture/control',{id,r,g,b,a:0,
     intensity:+document.getElementById('int_'+id).value,
     mode:document.getElementById('mode_'+id).value,
