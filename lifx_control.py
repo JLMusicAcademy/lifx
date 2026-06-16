@@ -50,6 +50,7 @@ import select
 import socket
 import struct
 import sys
+import threading
 import time
 
 # --- LIFX LAN protocol constants -------------------------------------------
@@ -204,12 +205,39 @@ def make_socket(timeout=1.0):
 
 
 def send(packet, ip=None):
-    """Send a packet to a specific bulb IP, or broadcast to all bulbs."""
-    sock = make_socket()
-    try:
-        sock.sendto(packet, (ip or BROADCAST_ADDR, LIFX_PORT))
-    finally:
-        sock.close()
+    """Send a packet to a specific bulb IP, or broadcast to all bulbs.
+
+    Reuses a single UDP socket across calls (creating/closing a socket on every
+    send churned file descriptors and could intermittently fail under load). On
+    a socket error the socket is recreated and the send retried once; a genuine
+    'No route to host' (offline bulb) still raises so callers can handle it.
+    """
+    global _send_sock
+    dest = (ip or BROADCAST_ADDR, LIFX_PORT)
+    with _send_lock:
+        try:
+            _send_socket().sendto(packet, dest)
+        except OSError:
+            try:
+                if _send_sock is not None:
+                    _send_sock.close()
+            except OSError:
+                pass
+            _send_sock = None
+            _send_socket().sendto(packet, dest)  # retry once; may re-raise
+
+
+_send_lock = threading.Lock()
+_send_sock = None
+
+
+def _send_socket():
+    global _send_sock
+    if _send_sock is None:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        _send_sock = s
+    return _send_sock
 
 
 def discover(timeout=3.0, attempts=3):
