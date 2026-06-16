@@ -423,12 +423,12 @@ class Manager:
         self.save()
         return len(found), added
 
-    def auto_assign(self, only_unassigned=False):
+    def auto_assign(self, only_unassigned=False, base_universe=0, base_address=1):
         if only_unassigned:
             assigned = [f for f in self.fixtures if f.get("address")]
             pending = [f for f in self.fixtures if not f.get("address")]
             # Resume packing after the highest used address.
-            uni, addr = 0, 1
+            uni, addr = base_universe, base_address
             for f in assigned:
                 uni = max(uni, f["universe"])
             for f in assigned:
@@ -441,7 +441,7 @@ class Manager:
                 f["universe"], f["address"] = uni, addr
                 addr += lifx.CHANNELS_PER_FIXTURE
         else:
-            packed = lifx.auto_assign(self.fixtures)
+            packed = lifx.auto_assign(self.fixtures, base_universe, base_address)
             by_mac = {f["mac"]: f for f in packed}
             for f in self.fixtures:
                 p = by_mac.get(f.get("mac"))
@@ -700,7 +700,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send(200, {"ok": bool(f)})
 
         if path == "/api/auto-assign":
-            MGR.auto_assign(only_unassigned=False)
+            uni = max(0, int(body.get("universe") or 0))
+            addr = min(512, max(1, int(body.get("address") or 1)))
+            MGR.auto_assign(only_unassigned=False,
+                            base_universe=uni, base_address=addr)
             return self._send(200, {"ok": True, "conflicts": MGR.conflicts()})
 
         if path == "/api/blackout":
@@ -1144,10 +1147,13 @@ async function control(id){
 
 function renderPatch(){
   const f=S.fixtures||[];const c=S.conflicts||[];
-  let h=`<div class=card><div class=row>
+  let h=`<div class=card><div class=row style="align-items:flex-end">
+    <label class=fld style="width:84px">Universe<input id=aa_u value="0" inputmode=numeric></label>
+    <label class=fld style="width:104px">Start address<input id=aa_a placeholder="1" inputmode=numeric></label>
     <button class=act onclick=autoassign()>Auto-assign addresses</button>
     <a class=act href=/api/patch.csv style="text-decoration:none">Export patch CSV</a>
-    <span class=muted>${S.channels_per_fixture} channels per fixture</span></div>`;
+    <span class=muted>${S.channels_per_fixture} channels per fixture</span></div>
+    <div class=muted style="margin-top:8px;font-size:13px">Auto-assign packs all bulbs sequentially from the chosen universe &amp; start address (blank start = 1), rolling into the next universe when one fills.</div>`;
   if(c.length)h+=`<div class=bad style="margin-top:10px"><b>Conflicts:</b><br>${c.map(esc).join('<br>')}</div>`;
   else h+=`<div class=ok style="margin-top:10px">No address conflicts.</div>`;
   h+=`</div><div class=card><div class=tablewrap><table><tr><th>Name</th><th>Universe</th><th>Start</th><th>Group</th><th></th></tr>`;
@@ -1160,7 +1166,11 @@ function renderPatch(){
         <button class=warn onclick="rm('${x.id}')">✕</button></td></tr>`});
   h+=`</table></div></div>`;view.innerHTML=h;
 }
-async function autoassign(){await api('/api/auto-assign',{});toast('Re-addressed');refresh()}
+async function autoassign(){
+  const u=document.getElementById('aa_u'), a=document.getElementById('aa_a');
+  await api('/api/auto-assign',{universe:+(u&&u.value||0)||0,
+    address:(a&&a.value.trim())?+a.value:1});
+  toast('Re-addressed');refresh()}
 async function setAddr(id){await api('/api/fixture/address',{id,
   universe:+document.getElementById('u_'+id).value,
   address:+document.getElementById('a_'+id).value,
