@@ -871,6 +871,12 @@ main{padding:16px;max-width:980px;margin:0 auto}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
   padding:18px;margin-bottom:16px;box-shadow:var(--shadow)}
 h2{font-size:17px;margin:0 0 14px;font-weight:700}
+h3{font-size:14.5px;margin:16px 0 7px;font-weight:700;color:var(--brand)}
+.help p,.help li{line-height:1.6}
+.help ul,.help ol{margin:6px 0 10px 20px;padding:0}
+.help li{margin:5px 0}
+.help h3:first-child{margin-top:0}
+.lead{font-size:15px;line-height:1.6;margin:0 0 4px}
 .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
 .flex{display:flex;gap:14px;flex-wrap:wrap}
 button{font-family:inherit}
@@ -994,7 +1000,7 @@ APP_HTML = """<!doctype html><html><head><meta charset=utf-8>
 <div id=toast class=toast></div>
 <script>
 let S={};
-const tabs=['Bulbs','Patch','Effects','Maintenance','Settings','Profile','Help'];
+const tabs=['Bulbs','Patch','Maintenance','Settings','Profile','Help'];
 function toast(m){const t=document.getElementById('toast');t.textContent=m;
   t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1800)}
 async function api(p,b){const r=await fetch(p,{method:b?'POST':'GET',
@@ -1021,7 +1027,6 @@ async function refresh(){S=await api('/api/state');render()}
 function render(){
   if(tab==='Bulbs')return renderBulbs();
   if(tab==='Patch')return renderPatch();
-  if(tab==='Effects')return renderEffects();
   if(tab==='Maintenance')return renderMaint();
   if(tab==='Settings')return renderSettings();
   if(tab==='Profile')return renderProfile();
@@ -1176,46 +1181,6 @@ async function setAddr(id){await api('/api/fixture/address',{id,
 async function rm(id){if(confirm('Remove this fixture from the map?')){
   await api('/api/fixture/remove',{id});refresh()}}
 
-function renderEffects(){
-  view.innerHTML=`<div class=card><h2>Effect / Mode channel (ch+5)</h2>
-  <div class=tablewrap><table><tr><th>DMX value</th><th>Mode</th><th>Runs on</th></tr>
-  <tr><td>0–9</td><td>Static</td><td>SetColor</td></tr>
-  <tr><td>10–39</td><td>Breathe</td><td>bulb firmware</td></tr>
-  <tr><td>40–69</td><td>Pulse / blink</td><td>bulb firmware</td></tr>
-  <tr><td>70–99</td><td>Triangle</td><td>bulb firmware</td></tr>
-  <tr><td>100–129</td><td>Saw</td><td>bulb firmware</td></tr>
-  <tr><td>130–169</td><td>Color pulse</td><td>bulb firmware</td></tr>
-  <tr><td>170–209</td><td>Rainbow cycle</td><td><b>script-generated</b></td></tr>
-  <tr><td>210–239</td><td>Color loop</td><td><b>script-generated</b></td></tr>
-  <tr><td>240–255</td><td>Candle flicker</td><td><b>script-generated</b></td></tr></table></div>
-  <p class=muted>ch+6 = Effect Speed (slow→fast). ch+7 = Strobe overlay (0=off),
-  which takes priority over the mode. Native firmware effects cost almost no
-  network traffic; script effects stream at the rate cap.</p>
-  <details style="margin-top:14px">
-    <summary style="cursor:pointer;font-weight:650">What does “script-generated” mean?</summary>
-    <div style="margin-top:10px;line-height:1.55">
-      <p>It’s about <b>where the animation is computed</b>. Effects come from one of two engines:</p>
-      <p><b>Bulb firmware</b> (Breathe, Pulse, Triangle, Saw, Color pulse).
-      The bridge sends the bulb a single waveform command and the bulb’s own chip
-      animates it. The bridge only re-arms it occasionally, so it costs
-      <b>almost no network traffic</b> and keeps running even if the bridge pauses.</p>
-      <p><b>Script-generated</b> (Rainbow, Color loop, Candle). LIFX firmware has no
-      native version of these, so <b>the bridge computes every frame itself</b> and
-      streams a continuous series of color updates to the bulb:</p>
-      <ul style="margin:6px 0 6px 18px">
-        <li><b>Rainbow</b> — advances a hue angle over time (≈6–180°/sec, set by Speed) for a smooth hue sweep.</li>
-        <li><b>Color loop</b> — steps through a fixed palette, one color per step, dwell time set by Speed.</li>
-        <li><b>Candle</b> — randomly flickers a dimmed warm hue every ~80&nbsp;ms.</li>
-      </ul>
-      <p>Because the bridge pushes these frames over the network (up to the rate cap,
-      ~20&nbsp;updates/sec per bulb), script effects are the <b>bandwidth-heavy</b>
-      ones. On a large rig, running many bulbs in Rainbow/Loop/Candle at once is what
-      saturates the network — firmware effects scale far more cheaply. Script effects
-      also stop if the bridge stops; firmware effects keep going on the bulb.</p>
-    </div>
-  </details></div>`;
-}
-
 function monitorHtml(){
   const L=S.listener||{};const m=S.monitor||{};
   let h=`<div class=card><h2>Listener status</h2>
@@ -1352,16 +1317,128 @@ async function changePw(){const j=await api('/api/change-password',
   {current:pw_c.value,new:pw_n.value});toast(j.ok?'Password changed':j.error)}
 
 function renderHelp(){
-  view.innerHTML=`<div class=card><h2>Quick start</h2><ol>
-  <li><b>Settings → Network</b> → give this device a static IP (scan to find a free one).</li>
-  <li><b>Bulbs tab</b> → Discover bulbs. Use <b>Identify</b> to flash each one and
-   give it a name (Entrance, Wall, Overhead…).</li>
-  <li><b>Patch tab</b> → Auto-assign addresses, fix any conflicts, Export the CSV.</li>
-  <li>In QLab, patch one <b>8-channel</b> fixture per bulb at the addresses from the CSV
-   (R,G,B,Amber,Intensity,Mode,Speed,Strobe).</li>
-  <li><b>Settings → Monitor</b> → Start the listener and confirm DMX is arriving.</li>
-  </ol>
-  <p class=muted>Channels per fixture: 8. A 512-channel universe holds 64 bulbs.</p></div>`;
+  view.innerHTML=`
+  <div class="card help">
+    <h2>Quick start</h2>
+    <p class=lead>This device turns your QLab Art-Net (DMX-over-network) output into
+    commands for LIFX Wi-Fi bulbs — so you can cue and run LIFX bulbs like ordinary
+    stage fixtures. Get going in five steps:</p>
+    <ol>
+      <li><b>Give this device a fixed address.</b> <b>Settings → Network</b> →
+        <i>Scan my network</i> to find a free IP, then set a static IP. A fixed
+        address means QLab can always reach it.</li>
+      <li><b>Find your bulbs.</b> <b>Bulbs</b> → <i>Discover bulbs</i>. Tap
+        <i>Identify</i> to flash one so you know which is which, then name it
+        (Entrance, Wall, Overhead…).</li>
+      <li><b>Address them.</b> <b>Patch</b> → set a Universe &amp; Start address and
+        <i>Auto-assign</i>. Fix any conflicts, then <i>Export patch CSV</i>.</li>
+      <li><b>Patch in QLab.</b> Add one <b>8-channel</b> fixture per bulb at the
+        universe/address from the CSV. Channel order is
+        <b>R, G, B, Amber, Intensity, Mode, Speed, Strobe</b>.</li>
+      <li><b>Go live.</b> <b>Settings → Monitor</b> → <i>Start</i> the listener and
+        confirm DMX is arriving. Send a cue and the bulbs should respond.</li>
+    </ol>
+    <p class=muted>8 channels per fixture · a 512-channel universe holds 64 bulbs.</p>
+  </div>
+
+  <div class="card help">
+    <h2>The screens</h2>
+    <h3>Bulbs</h3>
+    <p>Your live control surface. Each bulb is one row; click it to expand and set
+    <b>colour</b> (tap the swatch to open the wheel), <b>intensity</b>, <b>mode</b>,
+    <b>speed</b> and <b>strobe</b>. Use this to test or to override a bulb by hand.
+    A bulb you drive here shows <span class=pill>web</span> until you press
+    <i>Release to QLab</i>. <i>Blackout</i> kills all output; <i>Resume</i> restores it.</p>
+    <h3>Patch</h3>
+    <p>Assign each bulb a DMX <b>universe</b> and <b>start address</b>. Set a Universe
+    and Start address and <i>Auto-assign</i> to lay out a whole batch sequentially
+    (it rolls into the next universe when one fills). Conflicts are flagged in red.
+    <i>Export patch CSV</i> gives you the list to type into QLab.</p>
+    <h3>Maintenance</h3>
+    <p>Talk to the bulbs directly — read diagnostics (model, firmware, Wi-Fi signal,
+    uptime) and write names/groups onto the bulb itself. (First-time Wi-Fi setup of a
+    brand-new bulb and firmware updates still need the LIFX phone app.)</p>
+    <h3>Settings</h3>
+    <ul>
+      <li><b>General</b> — listener tuning: max updates/sec per bulb, smooth-fade time,
+        white temperature, auto-rediscover interval, bind host. Restart the listener
+        to apply.</li>
+      <li><b>Monitor</b> — start/stop/restart the Art-Net listener and watch incoming
+        DMX live to confirm QLab is reaching you.</li>
+      <li><b>Network</b> — set this device's IP (DHCP or static) and scan the subnet
+        for a free address.</li>
+    </ul>
+  </div>
+
+  <div class="card help">
+    <h2>How a bulb maps to DMX</h2>
+    <p>Each bulb uses <b>8 consecutive channels</b> starting at its patch address:</p>
+    <ol>
+      <li><b>Red</b> · <b>Green</b> · <b>Blue</b> — the colour (0–255 each).</li>
+      <li><b>Amber</b> — extra warm white, mixed in on top of RGB.</li>
+      <li><b>Intensity</b> — overall brightness / master dimmer.</li>
+      <li><b>Mode</b> — selects a static look or an effect (see the table below).</li>
+      <li><b>Speed</b> — effect rate, slow → fast.</li>
+      <li><b>Strobe</b> — strobe overlay; 0 = off. Takes priority over the mode.</li>
+    </ol>
+  </div>
+
+  <div class="card help">
+    <h2>Effect / Mode channel (channel 6)</h2>
+    <p>The value on the Mode channel chooses the look:</p>
+    <div class=tablewrap><table><tr><th>DMX value</th><th>Mode</th><th>Runs on</th></tr>
+    <tr><td>0–9</td><td>Static</td><td>bridge (SetColor)</td></tr>
+    <tr><td>10–39</td><td>Breathe</td><td>bulb firmware</td></tr>
+    <tr><td>40–69</td><td>Pulse / blink</td><td>bulb firmware</td></tr>
+    <tr><td>70–99</td><td>Triangle</td><td>bulb firmware</td></tr>
+    <tr><td>100–129</td><td>Saw</td><td>bulb firmware</td></tr>
+    <tr><td>130–169</td><td>Color pulse</td><td>bulb firmware</td></tr>
+    <tr><td>170–209</td><td>Rainbow cycle</td><td><b>script-generated</b></td></tr>
+    <tr><td>210–239</td><td>Color loop</td><td><b>script-generated</b></td></tr>
+    <tr><td>240–255</td><td>Candle flicker</td><td><b>script-generated</b></td></tr></table></div>
+    <p class=muted style="margin-top:10px">Speed = channel 7 (slow→fast). Strobe =
+    channel 8 (0 = off) and overrides the mode.</p>
+    <details style="margin-top:12px">
+      <summary style="cursor:pointer;font-weight:700">What does “script-generated” mean?</summary>
+      <div style="margin-top:10px;line-height:1.6">
+        <p>It's about <b>where the animation is computed</b>. Effects come from one of two engines:</p>
+        <p><b>Bulb firmware</b> (Breathe, Pulse, Triangle, Saw, Color pulse). The bridge
+        sends the bulb a single waveform command and the bulb's own chip animates it.
+        The bridge only re-arms it occasionally, so it costs <b>almost no network
+        traffic</b> and keeps running even if the bridge pauses.</p>
+        <p><b>Script-generated</b> (Rainbow, Color loop, Candle). LIFX firmware has no
+        native version of these, so <b>the bridge computes every frame itself</b> and
+        streams a continuous series of colour updates to the bulb:</p>
+        <ul>
+          <li><b>Rainbow</b> — advances a hue angle over time (≈6–180°/sec, set by Speed) for a smooth hue sweep.</li>
+          <li><b>Color loop</b> — steps through a fixed palette, one colour per step, dwell time set by Speed.</li>
+          <li><b>Candle</b> — randomly flickers a dimmed warm hue every ~80&nbsp;ms.</li>
+        </ul>
+        <p>Because the bridge pushes these frames over the network (up to the rate cap,
+        ~20&nbsp;updates/sec per bulb), script effects are the <b>bandwidth-heavy</b>
+        ones. On a large rig, running many bulbs in Rainbow/Loop/Candle at once is what
+        saturates the network — firmware effects scale far more cheaply. Script effects
+        also stop if the bridge stops; firmware effects keep going on the bulb.</p>
+      </div>
+    </details>
+  </div>
+
+  <div class="card help">
+    <h2>Tips &amp; troubleshooting</h2>
+    <ul>
+      <li><b>No DMX in Monitor?</b> Check QLab is sending Art-Net to this device's IP
+        and the universe numbers match your patch.</li>
+      <li><b>A bulb won't respond to cues?</b> If it shows <span class=pill>web</span>
+        it's under manual control — press <i>Release to QLab</i> on the Bulbs tab.</li>
+      <li><b>Effects lag on a big rig?</b> That's almost always the script effects
+        (Rainbow/Loop/Candle) saturating the network — prefer firmware effects, or
+        lower <i>Max updates/sec</i> in Settings → General.</li>
+      <li><b>Bulb missing after a reboot?</b> Run <i>Discover</i> again; enable
+        auto-rediscover in Settings → General to do it periodically.</li>
+      <li><b>Forgot the password?</b> Restart the device 3× in a row (each within 60s)
+        to reset to admin / admin123.</li>
+    </ul>
+  </div>`;
 }
 
 drawNav();wirePicker();refresh();
