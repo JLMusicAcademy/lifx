@@ -574,7 +574,7 @@ ARTNET_PORT = 6454
 OP_POLL = 0x2000
 OP_POLL_REPLY = 0x2100
 OP_DMX = 0x5000
-CHANNELS_PER_FIXTURE = 8  # R, G, B, Amber, Intensity, Mode, Speed, Strobe
+CHANNELS_PER_FIXTURE = 9  # R,G,B,Amber,Intensity,Mode,Speed,Strobe,FX Scene
 
 # Effect/Mode channel (ch+5) value ranges -> mode name.
 EFFECT_RANGES = [
@@ -790,7 +790,7 @@ def refresh_ips(fixtures, timeout=2.0):
 
 
 def print_fixture_table(fixtures):
-    print("DMX fixture map (8ch each: R,G,B,Amber,Intensity,Mode,Speed,Strobe):")
+    print("DMX fixture map (9ch each: R,G,B,Amber,Intensity,Mode,Speed,Strobe,FX):")
     for f in fixtures:
         name = f.get("label") or "?"
         print(f"  U{f['universe']:<3} addr {f['address']:>3}  {name:24} "
@@ -843,7 +843,7 @@ def build_artpoll_reply(node_ip, universes):
 
 
 def decode_controls(dmx, i, kelvin):
-    """Read an 8-channel fixture starting at index i into a control dict."""
+    """Read a 9-channel fixture starting at index i into a control dict."""
     r, g, b, a, it = dmx[i], dmx[i + 1], dmx[i + 2], dmx[i + 3], dmx[i + 4]
     return {
         "hsbk": rgba_to_hsbk(r, g, b, a, it, kelvin),
@@ -852,6 +852,7 @@ def decode_controls(dmx, i, kelvin):
         "mode": decode_mode(dmx[i + 5]),
         "speed": dmx[i + 6],
         "strobe": dmx[i + 7],
+        "fx_scene": decode_fx_scene(dmx[i + 8]),
     }
 
 
@@ -990,6 +991,7 @@ def listen_artnet(fixtures, max_hz=20.0, smooth_ms=120, kelvin=3500,
         f["controls"] = None
         f["last_key"], f["last_send"] = None, 0.0
         f["armed"], f["rearm_at"] = None, 0.0
+        f["tile_armed"] = None
         f["phase"], f["anim_last"] = 0.0, 0.0
         f["step"], f["step_at"] = 0, 0.0
         by_universe.setdefault(f["universe"], []).append(f)
