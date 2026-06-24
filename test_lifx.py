@@ -87,5 +87,58 @@ class ChannelWidthTest(unittest.TestCase):
         self.assertEqual(fx[56]["address"], 1)
 
 
+class DispatchPrecedenceTest(unittest.TestCase):
+    def setUp(self):
+        self.sent = []
+        self._orig = lifx.send
+        lifx.send = lambda pkt, ip=None: self.sent.append(lifx.parse_header(pkt)[0])
+
+    def tearDown(self):
+        lifx.send = self._orig
+
+    def _fixture(self):
+        f = {"live_ip": "127.0.0.1", "label": "t",
+             "last_key": None, "armed": None, "tile_armed": None,
+             "last_send": 0.0, "rearm_at": 0.0, "phase": 0.0,
+             "anim_last": 0.0, "step": 0, "step_at": 0.0}
+        return f
+
+    def _controls(self, **over):
+        c = {"hsbk": (0, 100, 100, 3500), "intensity": 100, "kelvin": 3500,
+             "mode": "static", "speed": 128, "strobe": 0, "fx_scene": "none"}
+        c.update(over)
+        return c
+
+    def test_strobe_beats_fx(self):
+        f = self._fixture()
+        c = self._controls(strobe=200, fx_scene="clouds")
+        lifx.service_fixture(f, c, 1000.0, 0.0, 120, False)
+        self.assertIn(lifx.MSG_SET_WAVEFORM_OPTIONAL, self.sent)   # strobe armed
+        self.assertNotIn(lifx.MSG_SET_TILE_EFFECT, self.sent)      # FX suppressed
+
+    def test_fx_firmware_arms_tile_effect(self):
+        f = self._fixture()
+        c = self._controls(fx_scene="clouds")
+        lifx.service_fixture(f, c, 1000.0, 0.0, 120, False)
+        self.assertIn(lifx.MSG_SET_TILE_EFFECT, self.sent)
+        self.assertIsNotNone(f["tile_armed"])
+
+    def test_fx_arms_only_once(self):
+        f = self._fixture()
+        c = self._controls(fx_scene="clouds")
+        lifx.service_fixture(f, c, 1000.0, 0.0, 120, False)
+        self.sent.clear()
+        lifx.service_fixture(f, c, 1000.1, 0.0, 120, False)        # same sig
+        self.assertEqual(self.sent, [])                            # no re-send
+
+    def test_leaving_fx_sends_off(self):
+        f = self._fixture()
+        f["tile_armed"] = ("fx", "clouds", 30000)
+        c = self._controls(fx_scene="none", mode="static")
+        lifx.service_fixture(f, c, 1000.0, 0.0, 120, False)
+        self.assertIn(lifx.MSG_SET_TILE_EFFECT, self.sent)         # OFF packet
+        self.assertIsNone(f["tile_armed"])
+
+
 if __name__ == "__main__":
     unittest.main()

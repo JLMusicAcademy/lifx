@@ -890,6 +890,21 @@ def _send_throttled(f, hsbk, now, min_interval, smooth_ms, verbose, label, tag):
         print(f"[{label}] {tag} -> H{hsbk[0]:6.1f} S{hsbk[1]:5.1f} B{hsbk[2]:5.1f}")
 
 
+def _drop_tile_effect(f):
+    """Stop a running firmware tile effect on the bulb, once, if one is armed."""
+    if f.get("tile_armed"):
+        try:
+            set_tile_effect_off(f["live_ip"])
+        except OSError:
+            pass
+        f["tile_armed"] = None
+        f["last_key"] = None  # force a fresh SetColor when we resume normal output
+
+
+def _service_script_fx(f, scene, c, now, min_interval, smooth_ms, verbose, label):
+    pass  # replaced in Task 5
+
+
 def service_fixture(f, c, now, min_interval, smooth_ms, verbose):
     """Apply one fixture's current DMX control state to its bulb."""
     label = f.get("label") or f["live_ip"]
@@ -897,6 +912,7 @@ def service_fixture(f, c, now, min_interval, smooth_ms, verbose):
 
     # 1) Strobe (dedicated channel) is an overlay that takes priority.
     if c["strobe"] > 0:
+        _drop_tile_effect(f)
         period = strobe_to_period_ms(c["strobe"])
         target = (base[0], base[1], 0, base[3])
         sig = ("strobe", round(period), _hsbk_key(base))
@@ -904,7 +920,29 @@ def service_fixture(f, c, now, min_interval, smooth_ms, verbose):
                     period, sig, now, verbose, label)
         return
 
-    # 2) Native firmware effects (run on the bulb; almost no ongoing traffic).
+    # 2) FX Scene (ch9): firmware matrix effects, then script-emulated looks.
+    fx = c.get("fx_scene", "none")
+    if fx in FX_FIRMWARE:
+        speed_ms = tile_speed_ms(c["speed"])
+        sig = ("fx", fx, round(speed_ms))
+        if f.get("tile_armed") != sig:
+            effect_type, palette, sky_type = fx_firmware_spec(fx)
+            set_tile_effect(effect_type, speed_ms, palette=palette,
+                            sky_type=sky_type, ip=f["live_ip"])
+            f["tile_armed"] = sig
+            f["armed"] = None
+            if verbose:
+                print(f"[{label}] fx {fx} speed={speed_ms}ms")
+        return
+    if fx in FX_SCRIPT:
+        _drop_tile_effect(f)
+        _service_script_fx(f, fx, c, now, min_interval, smooth_ms, verbose, label)
+        return
+
+    # Leaving any firmware tile effect -> turn it off once.
+    _drop_tile_effect(f)
+
+    # 3) Native firmware effects (run on the bulb; almost no ongoing traffic).
     native = native_effect_params(c["mode"], base)
     if native is not None:
         waveform, target, flags = native
@@ -914,7 +952,7 @@ def service_fixture(f, c, now, min_interval, smooth_ms, verbose):
                     now, verbose, label)
         return
 
-    # 3) Static + script effects own the color outright; drop any armed effect.
+    # 4) Static + script effects own the color outright; drop any armed effect.
     f["armed"] = None
     intensity, kelvin = c["intensity"], c["kelvin"]
 
