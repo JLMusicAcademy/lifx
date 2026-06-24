@@ -902,7 +902,32 @@ def _drop_tile_effect(f):
 
 
 def _service_script_fx(f, scene, c, now, min_interval, smooth_ms, verbose, label):
-    pass  # replaced in Task 5
+    """Whole-bulb, bridge-streamed approximations of app FX (Flicker/Twinkle/
+    Meteor). Rate-limited like the existing rainbow/candle effects."""
+    base = c["hsbk"]
+    intensity, kelvin = c["intensity"], c["kelvin"]
+    if scene == "flicker":
+        if now - f["last_send"] >= max(min_interval, 0.05):
+            bri = max(0.0, min(100.0, intensity * random.uniform(0.6, 1.0)))
+            set_color(base[0], base[1], bri, kelvin, 60, f["live_ip"])
+            f["last_send"] = now
+    elif scene == "twinkle":
+        if now - f["last_send"] >= max(min_interval, 0.08):
+            dip = random.random() < 0.5
+            bri = (intensity if not dip
+                   else max(0.0, intensity * random.uniform(0.2, 0.5)))
+            set_color(base[0], base[1], bri, kelvin, 50, f["live_ip"])
+            f["last_send"] = now
+    elif scene == "meteor":
+        # Fast asymmetric pulse: sharp on, decay to 0 (whole-bulb approximation).
+        period_s = max(0.2, tile_speed_ms(c["speed"]) / 10000.0)
+        phase = (now % period_s) / period_s
+        if now - f["last_send"] >= min_interval:
+            set_color(base[0], base[1], max(0.0, intensity * (1.0 - phase)),
+                      kelvin, 40, f["live_ip"])
+            f["last_send"] = now
+    if verbose:
+        print(f"[{label}] script fx {scene}")
 
 
 def service_fixture(f, c, now, min_interval, smooth_ms, verbose):

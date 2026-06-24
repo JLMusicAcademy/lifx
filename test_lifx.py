@@ -140,5 +140,22 @@ class DispatchPrecedenceTest(unittest.TestCase):
         self.assertIsNone(f["tile_armed"])
 
 
+class ScriptFxTest(unittest.TestCase):
+    def setUp(self):
+        self.sent = []
+        self._orig = lifx.send
+        lifx.send = lambda pkt, ip=None: self.sent.append(lifx.parse_header(pkt)[0])
+
+    def tearDown(self):
+        lifx.send = self._orig
+
+    def test_flicker_streams_setcolor(self):
+        f = {"live_ip": "127.0.0.1", "label": "t", "last_send": 0.0}
+        c = {"hsbk": (30, 80, 100, 3500), "intensity": 100, "kelvin": 3500,
+             "speed": 128}
+        lifx._service_script_fx(f, "flicker", c, 1000.0, 0.0, 120, False, "t")
+        self.assertIn(lifx.MSG_SET_COLOR, self.sent)
+
+
 if __name__ == "__main__":
     unittest.main()
