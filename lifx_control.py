@@ -93,6 +93,18 @@ MSG_STATE_GROUP = 53
 MSG_ECHO_REQUEST = 58
 MSG_ECHO_RESPONSE = 59
 
+# Matrix (Tile/Candle) firmware effects — SetTileEffect.
+MSG_GET_TILE_EFFECT = 718
+MSG_SET_TILE_EFFECT = 719
+MSG_STATE_TILE_EFFECT = 720
+TILE_EFFECT_OFF = 0
+TILE_EFFECT_MORPH = 2
+TILE_EFFECT_FLAME = 3
+TILE_EFFECT_SKY = 5
+SKY_SUNRISE = 0
+SKY_SUNSET = 1
+SKY_CLOUDS = 2
+
 # A small map of LIFX product IDs -> (name, has_color). Anything not listed
 # falls back to "Product <id>". (LIFX publishes the full list as products.json.)
 LIFX_PRODUCTS = {
@@ -336,6 +348,53 @@ def set_waveform_optional(hue, saturation, brightness, kelvin, period_ms, cycles
     payload += struct.pack("<BBBB", int(set_hue), int(set_saturation),
                            int(set_brightness), int(set_kelvin))
     send(build_packet(MSG_SET_WAVEFORM_OPTIONAL, payload), ip)
+
+
+def tile_effect_payload(effect_type, speed_ms, palette=None, sky_type=None,
+                        cloud_sat_min=51, cloud_sat_max=178, duration_ms=0,
+                        instanceid=0):
+    """Pack a SetTileEffect (719) payload (matrix devices like the Candle).
+
+    Layout: 2 reserved bytes, instanceid u32, type u8, speed u32 (ms),
+    duration u64 (ns; 0 = run forever), 2 reserved u32, parameters 8xu32
+    (32 bytes), palette_count u8, palette (fixed 16 HSBK colours = 128 bytes,
+    zero-padded). MORPH uses the palette; SKY writes sky_type + cloud
+    saturation into parameters; FLAME needs neither.
+    """
+    palette = list(palette or [])[:16]
+    params = bytearray(32)
+    if effect_type == TILE_EFFECT_SKY and sky_type is not None:
+        params[0] = sky_type & 0xFF
+        params[4] = max(0, min(255, int(cloud_sat_min)))
+        params[8] = max(0, min(255, int(cloud_sat_max)))
+
+    head = struct.pack("<BBIBIQII",
+                       0, 0,                          # 2 reserved bytes
+                       instanceid & 0xFFFFFFFF,       # instanceid
+                       effect_type,                   # type
+                       int(speed_ms),                 # speed (ms)
+                       int(duration_ms) * 1_000_000,  # duration (ms -> ns)
+                       0, 0)                          # 2 reserved u32
+    pal = bytearray()
+    padded = palette + [(0, 0, 0, 0)] * (16 - len(palette))
+    for hue, sat, bri, kelvin in padded:
+        pal += hsbk_payload(hue, sat, bri, kelvin)
+    return head + bytes(params) + struct.pack("<B", len(palette)) + bytes(pal)
+
+
+def set_tile_effect(effect_type, speed_ms, palette=None, sky_type=None,
+                    duration_ms=0, ip=None):
+    """Start (or change) a matrix firmware effect on the bulb."""
+    payload = tile_effect_payload(effect_type, speed_ms, palette=palette,
+                                  sky_type=sky_type, duration_ms=duration_ms,
+                                  instanceid=random.getrandbits(32))
+    send(build_packet(MSG_SET_TILE_EFFECT, payload), ip)
+
+
+def set_tile_effect_off(ip=None):
+    """Stop any running matrix firmware effect."""
+    send(build_packet(MSG_SET_TILE_EFFECT,
+                      tile_effect_payload(TILE_EFFECT_OFF, 0)), ip)
 
 
 def get_state(ip=None):
