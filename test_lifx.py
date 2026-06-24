@@ -39,5 +39,32 @@ class TileEffectPayloadTest(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<Q", p, 11)[0], 0)  # duration ns
 
 
+class FxSceneDecodeTest(unittest.TestCase):
+    def test_band_boundaries(self):
+        cases = {0: "none", 9: "none", 10: "morph", 20: "morph", 29: "morph",
+                 40: "color_cycle", 60: "pastels", 80: "spooky", 100: "rando",
+                 120: "flame", 140: "sunrise", 160: "sunset", 180: "clouds",
+                 200: "flicker", 220: "twinkle", 240: "meteor", 255: "meteor"}
+        for value, name in cases.items():
+            self.assertEqual(lifx.decode_fx_scene(value), name, f"value {value}")
+
+    def test_firmware_vs_script_partition(self):
+        self.assertIn("clouds", lifx.FX_FIRMWARE)
+        self.assertIn("flicker", lifx.FX_SCRIPT)
+        self.assertFalse(lifx.FX_FIRMWARE & lifx.FX_SCRIPT)
+
+    def test_firmware_spec_morph_and_sky(self):
+        et, pal, sky = lifx.fx_firmware_spec("spooky")
+        self.assertEqual(et, lifx.TILE_EFFECT_MORPH)
+        self.assertTrue(pal and len(pal[0]) == 4)        # (hue,sat,bri,kelvin)
+        et, pal, sky = lifx.fx_firmware_spec("sunset")
+        self.assertEqual((et, sky), (lifx.TILE_EFFECT_SKY, lifx.SKY_SUNSET))
+        et, pal, sky = lifx.fx_firmware_spec("flame")
+        self.assertEqual(et, lifx.TILE_EFFECT_FLAME)
+
+    def test_tile_speed_monotonic(self):
+        self.assertGreater(lifx.tile_speed_ms(0), lifx.tile_speed_ms(255))
+
+
 if __name__ == "__main__":
     unittest.main()

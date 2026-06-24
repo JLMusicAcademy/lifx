@@ -605,6 +605,87 @@ def decode_mode(value):
     return "static"
 
 
+# FX Scene channel (ch9) value ranges -> scene name (canonical value in comment).
+FX_RANGES = [
+    (10, "none"),         # 0     no FX (fall through to the Mode channel)
+    (30, "morph"),        # 20    firmware MORPH, default palette
+    (50, "color_cycle"),  # 40    firmware MORPH, rainbow palette
+    (70, "pastels"),      # 60    firmware MORPH, pastel palette
+    (90, "spooky"),       # 80    firmware MORPH, orange/purple/green
+    (110, "rando"),       # 100   firmware MORPH, random palette per arm
+    (130, "flame"),       # 120   firmware FLAME
+    (150, "sunrise"),     # 140   firmware SKY, sky_type=SUNRISE
+    (170, "sunset"),      # 160   firmware SKY, sky_type=SUNSET
+    (190, "clouds"),      # 180   firmware SKY, sky_type=CLOUDS
+    (210, "flicker"),     # 200   script-generated
+    (230, "twinkle"),     # 220   script-generated
+    (256, "meteor"),      # 240   script-generated
+]
+
+FX_FIRMWARE = {"morph", "color_cycle", "pastels", "spooky", "rando",
+               "flame", "sunrise", "sunset", "clouds"}
+FX_SCRIPT = {"flicker", "twinkle", "meteor"}
+
+# Morph palettes as (hue 0-360, saturation 0-100).
+FX_PALETTES = {
+    "morph":       [(0, 100), (40, 100), (200, 100), (280, 100), (120, 100)],
+    "color_cycle": [(0, 100), (60, 100), (120, 100), (180, 100), (240, 100),
+                    (300, 100)],
+    "pastels":     [(0, 40), (50, 40), (120, 35), (200, 40), (280, 40),
+                    (330, 40)],
+    "spooky":      [(25, 100), (280, 100), (120, 100)],
+}
+
+# Used only if a Candle's firmware turns out not to support the SKY effect:
+# flip SKY_SUPPORTED to False and the three SKY scenes become Morph palettes.
+SKY_SUPPORTED = True
+FX_SKY_FALLBACK = {
+    "sunrise": [(20, 90), (35, 80), (50, 60)],
+    "sunset":  [(10, 100), (300, 70), (30, 90)],
+    "clouds":  [(210, 30), (0, 0), (220, 20)],
+}
+
+
+def decode_fx_scene(value):
+    """Map the FX Scene channel byte (0-255) to a scene name."""
+    for threshold, name in FX_RANGES:
+        if value < threshold:
+            return name
+    return "meteor"
+
+
+def tile_speed_ms(speed_byte, fast_ms=1000, slow_ms=30000):
+    """Map the Speed channel (0=slow .. 255=fast) to a tile-effect period (ms)."""
+    frac = max(0, min(255, speed_byte)) / 255.0
+    return int(slow_ms + (fast_ms - slow_ms) * frac)
+
+
+def fx_firmware_spec(scene):
+    """Return (effect_type, palette, sky_type) for a firmware FX scene.
+
+    palette is a list of (hue, sat, brightness, kelvin); sky_type is set only
+    for SKY scenes. Returns None for script/none scenes.
+    """
+    def _pal(pairs):
+        return [(h, s, 100, 3500) for (h, s) in pairs]
+
+    if scene in ("morph", "color_cycle", "pastels", "spooky"):
+        return TILE_EFFECT_MORPH, _pal(FX_PALETTES[scene]), None
+    if scene == "rando":
+        return (TILE_EFFECT_MORPH,
+                [(random.uniform(0, 360), 100, 100, 3500) for _ in range(6)],
+                None)
+    if scene == "flame":
+        return TILE_EFFECT_FLAME, None, None
+    if scene in ("sunrise", "sunset", "clouds"):
+        if not SKY_SUPPORTED:
+            return TILE_EFFECT_MORPH, _pal(FX_SKY_FALLBACK[scene]), None
+        sky = {"sunrise": SKY_SUNRISE, "sunset": SKY_SUNSET,
+               "clouds": SKY_CLOUDS}[scene]
+        return TILE_EFFECT_SKY, None, sky
+    return None
+
+
 def speed_to_period_ms(speed_byte, fast_ms=80, slow_ms=8000):
     """Map the Speed channel (0=slow .. 255=fast) to an effect period in ms."""
     frac = max(0, min(255, speed_byte)) / 255.0
