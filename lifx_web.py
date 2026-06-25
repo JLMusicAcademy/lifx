@@ -312,6 +312,25 @@ class BridgeState:
         self.last_dmx = {}
         self.packets = 0
         self.last_packet_t = 0.0
+        # Fixture map handed to the listener, plus a version counter it watches
+        # so universe/address edits hot-reload with no restart.
+        self.fixtures = []
+        self.map_version = 0
+
+    def publish_map(self, fixtures):
+        """Publish a fresh snapshot of the map for the listener to pick up.
+
+        A new list container (so the listener's in-flight snapshot is never
+        mutated mid-iteration) over the SAME fixture dicts (so live runtime
+        state — manual flag, resolved IP, effect phase — is preserved).
+        """
+        with self.lock:
+            self.fixtures = list(fixtures)
+            self.map_version += 1
+
+    def read_map(self):
+        with self.lock:
+            return self.fixtures, self.map_version
 
     def note_dmx(self, universe, dmx, t):
         with self.lock:
@@ -357,6 +376,12 @@ class Manager:
         fixtures = [{k: f.get(k) for k in self.STABLE_FIELDS} for f in self.fixtures]
         save_json(MAP_FILE, {"channels_per_fixture": lifx.CHANNELS_PER_FIXTURE,
                              "fixtures": fixtures})
+        self.touch_map()
+
+    def touch_map(self):
+        """Push the current map to a running listener so edits apply live."""
+        if self.state is not None and self.running():
+            self.state.publish_map(self.fixtures)
 
     def save_settings(self):
         save_json(SETTINGS_FILE, self.settings)
@@ -371,6 +396,7 @@ class Manager:
                 return
             self.bind_error = None
             self.state = BridgeState()
+            self.state.publish_map(self.fixtures)  # initial map for the listener
             s = self.settings
 
             def run():
@@ -1171,7 +1197,7 @@ function renderPatch(){
     <button class=act onclick=autoassign()>Auto-assign addresses</button>
     <a class=act href=/api/patch.csv style="text-decoration:none">Export patch CSV</a>
     <span class=muted>${S.channels_per_fixture} channels per fixture</span></div>
-    <div class=muted style="margin-top:8px;font-size:13px">Auto-assign packs all bulbs sequentially from the chosen universe &amp; start address (blank start = 1), rolling into the next universe when one fills.</div>`;
+    <div class=muted style="margin-top:8px;font-size:13px">Auto-assign packs all bulbs sequentially from the chosen universe &amp; start address (blank start = 1), rolling into the next universe when one fills. Universe/address changes apply to the running listener <b>live</b> — no restart needed.</div>`;
   if(c.length)h+=`<div class=bad style="margin-top:10px"><b>Conflicts:</b><br>${c.map(esc).join('<br>')}</div>`;
   else h+=`<div class=ok style="margin-top:10px">No address conflicts.</div>`;
   h+=`</div><div class=card><div class=tablewrap><table><tr><th>Name</th><th>Universe</th><th>Start</th><th>Group</th><th></th></tr>`;
@@ -1188,11 +1214,11 @@ async function autoassign(){
   const u=document.getElementById('aa_u'), a=document.getElementById('aa_a');
   await api('/api/auto-assign',{universe:+(u&&u.value||0)||0,
     address:(a&&a.value.trim())?+a.value:1});
-  toast('Re-addressed');refresh()}
+  toast('Re-addressed — applied live');refresh()}
 async function setAddr(id){await api('/api/fixture/address',{id,
   universe:+document.getElementById('u_'+id).value,
   address:+document.getElementById('a_'+id).value,
-  group:document.getElementById('g_'+id).value});toast('Set');refresh()}
+  group:document.getElementById('g_'+id).value});toast('Set — applied live');refresh()}
 async function rm(id){if(confirm('Remove this fixture from the map?')){
   await api('/api/fixture/remove',{id});refresh()}}
 
@@ -1368,7 +1394,8 @@ function renderHelp(){
     <p>Assign each bulb a DMX <b>universe</b> and <b>start address</b>. Set a Universe
     and Start address and <i>Auto-assign</i> to lay out a whole batch sequentially
     (it rolls into the next universe when one fills). Conflicts are flagged in red.
-    <i>Export patch CSV</i> gives you the list to type into QLab.</p>
+    <i>Export patch CSV</i> gives you the list to type into QLab. Universe/address
+    changes take effect on the running listener <b>immediately</b> — no restart.</p>
     <h3>Maintenance</h3>
     <p>Talk to the bulbs directly — read diagnostics (model, firmware, Wi-Fi signal,
     uptime) and write names/groups onto the bulb itself. (First-time Wi-Fi setup of a

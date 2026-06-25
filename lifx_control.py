@@ -45,6 +45,7 @@ import colorsys
 import hashlib
 import json
 import math
+import os
 import random
 import select
 import socket
@@ -1010,9 +1011,53 @@ def service_fixture(f, c, now, min_interval, smooth_ms, verbose):
                         label, "static")
 
 
+# Where the web app saves its fixture map. A standalone `listen` with no --map
+# uses this by default, so the web app stays the single source of truth without
+# anyone having to pass --map or hand-edit config files.
+DEFAULT_MAP_FILE = os.path.join(
+    os.environ.get("LIFX_BRIDGE_DIR", os.path.expanduser("~/.lifx-bridge")),
+    "map.json")
+
+
+def _init_runtime(f):
+    """Seed per-fixture runtime state, without clobbering live values.
+
+    Uses setdefault so a fixture that already exists keeps its running effect
+    state (phase, armed waveform, manual flag, resolved IP) across a hot reload;
+    only newly added fixtures get initialised.
+    """
+    f.setdefault("live_ip", f.get("ip"))
+    f.setdefault("controls", None)
+    f.setdefault("last_key", None)
+    f.setdefault("last_send", 0.0)
+    f.setdefault("armed", None)
+    f.setdefault("rearm_at", 0.0)
+    f.setdefault("tile_armed", None)
+    f.setdefault("phase", 0.0)
+    f.setdefault("anim_last", 0.0)
+    f.setdefault("step", 0)
+    f.setdefault("step_at", 0.0)
+
+
+def _index_by_universe(fixtures):
+    """Build the {universe: [fixtures]} routing table used to dispatch DMX."""
+    by_universe = {}
+    for f in fixtures:
+        _init_runtime(f)
+        by_universe.setdefault(f["universe"], []).append(f)
+    return by_universe
+
+
+def _map_mtime(path):
+    try:
+        return os.path.getmtime(path) if path else None
+    except OSError:
+        return None
+
+
 def listen_artnet(fixtures, max_hz=20.0, smooth_ms=120, kelvin=3500,
                   bind_host="0.0.0.0", poll_reply=True, rediscover=0,
-                  verbose=False, state=None, quiet=False):
+                  verbose=False, state=None, quiet=False, map_path=None):
     """Receive Art-Net DMX and drive each mapped bulb, rate-limited per bulb.
 
     Optional `state` is a duck-typed object the web UI passes in to control the
@@ -1022,6 +1067,10 @@ def listen_artnet(fixtures, max_hz=20.0, smooth_ms=120, kelvin=3500,
       - note_dmx(uni, dmx, t)  -> tap for the live DMX monitor
     and individual fixtures may carry f["manual"] = True to be skipped (the web
     UI is driving that bulb directly).
+
+    The fixture map is hot-reloaded with no restart when it changes: from the
+    in-memory `state` the web app publishes into (its `map_version` counter), or
+    — for a standalone listener — from `map_path` (map.json) watched for changes.
     """
     max_hz = max(1.0, max_hz)
     min_interval = 1.0 / max_hz
@@ -1047,17 +1096,17 @@ def listen_artnet(fixtures, max_hz=20.0, smooth_ms=120, kelvin=3500,
         sys.exit(msg)
     node_ip = local_ip()
 
-    # Index fixtures by universe and init per-fixture effect state.
-    by_universe = {}
-    for f in fixtures:
-        f.setdefault("live_ip", f.get("ip"))
-        f["controls"] = None
-        f["last_key"], f["last_send"] = None, 0.0
-        f["armed"], f["rearm_at"] = None, 0.0
-        f["tile_armed"] = None
-        f["phase"], f["anim_last"] = 0.0, 0.0
-        f["step"], f["step_at"] = 0, 0.0
-        by_universe.setdefault(f["universe"], []).append(f)
+    # Source the live fixture map: prefer the web app's published in-memory map
+    # (so manual-control and resolved IPs are shared), else the list we were
+    # handed. `map_version`/`map_mtime` track when to hot-reload (see the loop).
+    if state is not None and getattr(state, "fixtures", None):
+        fixtures, map_version = state.read_map()
+    else:
+        fixtures = list(fixtures)
+        map_version = getattr(state, "map_version", 0) if state is not None else 0
+    by_universe = _index_by_universe(fixtures)
+    map_mtime = _map_mtime(map_path)
+    next_map_check = 0.0
 
     if not quiet:
         print_fixture_table(fixtures)
@@ -1074,6 +1123,33 @@ def listen_artnet(fixtures, max_hz=20.0, smooth_ms=120, kelvin=3500,
         while not stopping():
             ready, _, _ = select.select([sock], [], [], min_interval)
             now = time.time()
+
+            # Hot-reload the fixture map if the web app changed it — no restart.
+            if state is not None:
+                if getattr(state, "map_version", map_version) != map_version:
+                    fixtures, map_version = state.read_map()
+                    by_universe = _index_by_universe(fixtures)
+                    if not quiet:
+                        print(f"Reloaded fixture map: {len(fixtures)} fixture(s) "
+                              f"across {len(by_universe)} universe(s).")
+            elif map_path is not None and now >= next_map_check:
+                next_map_check = now + 1.0
+                m = _map_mtime(map_path)
+                if m != map_mtime:
+                    map_mtime = m
+                    try:
+                        reloaded = load_map(map_path)
+                        for f in reloaded:
+                            f["live_ip"] = f.get("ip")
+                        fixtures = reloaded
+                        by_universe = _index_by_universe(fixtures)
+                        if not quiet:
+                            print(f"Reloaded {len(fixtures)} fixture(s) from "
+                                  f"{map_path} ({len(by_universe)} universe(s)).")
+                    except (OSError, ValueError, KeyError) as exc:
+                        if not quiet:
+                            print(f"Map reload failed ({exc}); keeping current map.")
+
             if ready:
                 data, addr = sock.recvfrom(2048)
                 if len(data) >= 10 and data[:8] == ARTNET_ID:
@@ -1259,9 +1335,14 @@ def main(argv=None):
         return
 
     if args.command == "listen":
-        if args.map:
-            fixtures = load_map(args.map)
+        # Default to the web app's saved map so it stays the source of truth.
+        map_path = args.map or (DEFAULT_MAP_FILE
+                                if os.path.exists(DEFAULT_MAP_FILE) else None)
+        if map_path:
+            fixtures = load_map(map_path)
             refresh_ips(fixtures)
+            print(f"Using fixture map {map_path}. Universe/address edits in the "
+                  f"web app reload automatically — no restart needed.")
         else:
             bulbs = discover_bulbs()
             if not bulbs:
@@ -1270,9 +1351,12 @@ def main(argv=None):
             fixtures = auto_assign(bulbs, args.universe, args.address)
             for f in fixtures:
                 f["live_ip"] = f["ip"]
+            print(f"No saved map found — auto-assigned from discovery (base "
+                  f"universe {args.universe}). Assign addresses in the web app "
+                  f"for a persistent, editable map.")
         listen_artnet(fixtures, args.max_hz, int(args.smooth * 1000), args.kelvin,
                       args.bind, not args.no_poll_reply, args.rediscover,
-                      args.verbose)
+                      args.verbose, map_path=map_path)
         return
 
     # All other commands target a single bulb (--ip/--label) or broadcast.
