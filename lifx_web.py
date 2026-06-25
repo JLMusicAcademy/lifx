@@ -316,6 +316,10 @@ class BridgeState:
         # so universe/address edits hot-reload with no restart.
         self.fixtures = []
         self.map_version = 0
+        # Live-tunable listener settings (max_hz/smooth_ms/kelvin/rediscover),
+        # likewise versioned so the loop picks them up without a restart.
+        self.settings = {}
+        self.settings_version = 0
 
     def publish_map(self, fixtures):
         """Publish a fresh snapshot of the map for the listener to pick up.
@@ -331,6 +335,17 @@ class BridgeState:
     def read_map(self):
         with self.lock:
             return self.fixtures, self.map_version
+
+    def publish_settings(self, settings):
+        """Publish the hot-tunable listener knobs (bind host is NOT one)."""
+        with self.lock:
+            self.settings = {k: settings.get(k) for k in
+                             ("max_hz", "smooth_ms", "kelvin", "rediscover")}
+            self.settings_version += 1
+
+    def read_settings(self):
+        with self.lock:
+            return dict(self.settings), self.settings_version
 
     def note_dmx(self, universe, dmx, t):
         with self.lock:
@@ -383,6 +398,21 @@ class Manager:
         if self.state is not None and self.running():
             self.state.publish_map(self.fixtures)
 
+    def touch_settings(self):
+        """Push hot-tunable settings to a running listener (no restart)."""
+        if self.state is not None and self.running():
+            self.state.publish_settings(self.settings)
+
+    def apply_settings(self, old_bind_host):
+        """Propagate a settings change: hot-apply the live knobs, but restart
+        the listener only when the bind host changed (it owns the socket)."""
+        if not self.running():
+            return
+        if self.settings.get("bind_host") != old_bind_host:
+            self.restart()
+        else:
+            self.touch_settings()
+
     def save_settings(self):
         save_json(SETTINGS_FILE, self.settings)
 
@@ -396,7 +426,8 @@ class Manager:
                 return
             self.bind_error = None
             self.state = BridgeState()
-            self.state.publish_map(self.fixtures)  # initial map for the listener
+            self.state.publish_map(self.fixtures)       # initial map
+            self.state.publish_settings(self.settings)  # initial live settings
             s = self.settings
 
             def run():
@@ -751,14 +782,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                     "error": MGR.bind_error})
 
         if path == "/api/settings":
+            old_bind = MGR.settings.get("bind_host")
             for key in ("max_hz", "smooth_ms", "kelvin", "rediscover", "web_port"):
                 if key in body:
                     MGR.settings[key] = type(DEFAULT_SETTINGS[key])(body[key])
             if "bind_host" in body:
                 MGR.settings["bind_host"] = body["bind_host"]
             MGR.save_settings()
+            MGR.apply_settings(old_bind)  # hot-apply; restart only on bind change
+            rebound = MGR.settings.get("bind_host") != old_bind
+            note = ("Bind host changed — listener rebound." if rebound
+                    else "Applied live.")
             return self._send(200, {"ok": True, "settings": MGR.settings,
-                                    "note": "Restart the listener to apply."})
+                                    "note": note})
 
         if path == "/api/fixture/info":
             f = MGR.find(body.get("id"))
@@ -1339,7 +1375,7 @@ function settingsGeneralHtml(){
    <label class=fld>Rediscover (s, 0=off)<input id=s_rd value="${s.rediscover}"></label>
    <label class=fld>Bind host<input id=s_bh value="${s.bind_host}"></label>
   </div><button class=act style="margin-top:12px" onclick=saveSettings()>Save</button>
-  <span class=muted>Restart the listener (Monitor section) to apply.</span></div>`;
+  <span class=muted>Applied to the running listener <b>live</b> — no restart. (Changing <b>Bind host</b> rebinds the socket, a brief blip.)</span></div>`;
 }
 function renderProfile(){
   view.innerHTML=`<div class=card><h2>Profile</h2>
@@ -1351,9 +1387,9 @@ function renderProfile(){
    <p class=muted>Lost the password? Restart the device 3× in a row (each within
    60s) to reset to admin / admin123.</p></div>`;
 }
-async function saveSettings(){await api('/api/settings',{max_hz:+s_hz.value,
+async function saveSettings(){const j=await api('/api/settings',{max_hz:+s_hz.value,
   smooth_ms:+s_sm.value,kelvin:+s_k.value,rediscover:+s_rd.value,bind_host:s_bh.value});
-  toast('Saved — restart listener to apply');refresh()}
+  toast('Saved — '+((j&&j.note)||'applied live'));refresh()}
 async function changePw(){const j=await api('/api/change-password',
   {current:pw_c.value,new:pw_n.value});toast(j.ok?'Password changed':j.error)}
 
@@ -1403,8 +1439,8 @@ function renderHelp(){
     <h3>Settings</h3>
     <ul>
       <li><b>General</b> — listener tuning: max updates/sec per bulb, smooth-fade time,
-        white temperature, auto-rediscover interval, bind host. Restart the listener
-        to apply.</li>
+        white temperature, auto-rediscover interval, bind host. Changes apply to the
+        running listener live; only bind host rebinds the socket (a brief blip).</li>
       <li><b>Monitor</b> — start/stop/restart the Art-Net listener and watch incoming
         DMX live to confirm QLab is reaching you.</li>
       <li><b>Network</b> — set this device's IP (DHCP or static) and scan the subnet

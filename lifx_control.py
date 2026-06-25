@@ -1107,6 +1107,7 @@ def listen_artnet(fixtures, max_hz=20.0, smooth_ms=120, kelvin=3500,
     by_universe = _index_by_universe(fixtures)
     map_mtime = _map_mtime(map_path)
     next_map_check = 0.0
+    settings_version = getattr(state, "settings_version", 0) if state is not None else 0
 
     if not quiet:
         print_fixture_table(fixtures)
@@ -1149,6 +1150,25 @@ def listen_artnet(fixtures, max_hz=20.0, smooth_ms=120, kelvin=3500,
                     except (OSError, ValueError, KeyError) as exc:
                         if not quiet:
                             print(f"Map reload failed ({exc}); keeping current map.")
+
+            # Hot-apply tunable settings (max_hz/smooth/kelvin/rediscover). Bind
+            # host isn't here — changing the socket binding needs a restart.
+            if state is not None and \
+                    getattr(state, "settings_version", settings_version) != settings_version:
+                new, settings_version = state.read_settings()
+                if new.get("max_hz"):
+                    max_hz = max(1.0, new["max_hz"])
+                    min_interval = 1.0 / max_hz
+                if new.get("smooth_ms") is not None:
+                    smooth_ms = new["smooth_ms"]
+                if new.get("kelvin"):
+                    kelvin = new["kelvin"]
+                if "rediscover" in new:
+                    rediscover = new["rediscover"] or 0
+                    next_rediscover = (now + rediscover) if rediscover else None
+                if not quiet:
+                    print(f"Applied settings live: {max_hz:g} Hz, {smooth_ms}ms "
+                          f"smooth, {kelvin}K, rediscover {rediscover}s.")
 
             if ready:
                 data, addr = sock.recvfrom(2048)
