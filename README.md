@@ -83,25 +83,24 @@ The script can present itself as an **Art-Net DMX node** so QLab's Light
 workspace drives your bulbs natively — with the RGB(A) color wheel, intensity,
 fade cues, **and the bulbs' own effects** (breathe, pulse, strobe, rainbow,
 etc.). It discovers every LIFX bulb on the network and maps each to a DMX
-address. Each bulb is a **9-channel fixture**:
+address. Each bulb is an **8-channel fixture**:
 
 | Offset | Channel   | Notes |
 |--------|-----------|-------|
-| +0     | Red       | color |
+| +0     | Red       | color (drive raw RGB — no RGBA/RGBW color parameter) |
 | +1     | Green     | color |
 | +2     | Blue      | color |
-| +3     | Amber     | color (folded into the mix at hue ~45 deg) |
-| +4     | Intensity | master dimmer |
-| +5     | Effect / Mode | ranged selector (see table below) |
-| +6     | Effect Speed  | period/rate for the selected effect (slow -> fast) |
-| +7     | Strobe        | dedicated overlay: 0 = off, 1-255 = slow -> fast |
-| +8     | FX Scene      | ranged selector for Candle FX scenes (see table below) |
+| +3     | Intensity | master dimmer |
+| +4     | Effect / Mode | ranged selector (see table below) |
+| +5     | Effect Speed  | period/rate for the selected effect (slow -> fast) |
+| +6     | Strobe        | dedicated overlay: 0 = off, 1-255 = slow -> fast |
+| +7     | FX Scene      | ranged selector for Candle FX scenes (see table below) |
 
-At 9 channels each, 56 bulbs fit in one 512-channel universe; beyond that the
+At 8 channels each, 64 bulbs fit in one 512-channel universe; beyond that the
 mapping rolls over into additional universes automatically. There's no hard
 limit on bulb count.
 
-### Effect / Mode channel (ch+5)
+### Effect / Mode channel (ch+4)
 
 | DMX value | Mode | How it runs |
 |-----------|------|-------------|
@@ -122,16 +121,16 @@ Rainbow / color-loop / candle have **no single-bulb firmware equivalent**, so
 the script animates them by streaming `SetColor` at the rate cap — fine for a
 handful of bulbs, heavier with many running at once.
 
-The **Strobe** channel (ch+7) is an independent overlay: any non-zero value
+The **Strobe** channel (ch+6) is an independent overlay: any non-zero value
 strobes the current color and takes priority over the Effect channel.
-`Effect Speed` (ch+6) sets the rate for whichever effect is selected.
+`Effect Speed` (ch+5) sets the rate for whichever effect is selected.
 
-### FX Scene channel (ch+8)
+### FX Scene channel (ch+7)
 
 Candle (matrix) bulbs can run their built-in FX scenes — the looks under the
-**FX** tab in the LIFX app. Set ch+8 to the canonical value for a scene:
+**FX** tab in the LIFX app. Set ch+7 to the canonical value for a scene:
 
-| ch+8 | Scene | Engine |
+| ch+7 | Scene | Engine |
 |------|-------|--------|
 | 0    | none (use Mode channel) | — |
 | 20   | Morph | firmware |
@@ -147,8 +146,8 @@ Candle (matrix) bulbs can run their built-in FX scenes — the looks under the
 | 220  | Twinkle | script-generated |
 | 240  | Meteor | script-generated |
 
-Strobe (ch+7) overrides FX; FX overrides the Mode channel (ch+5). Effect Speed
-(ch+6) sets the FX rate. Each scene occupies a ±9 band around its value. Morph,
+Strobe (ch+6) overrides FX; FX overrides the Mode channel (ch+4). Effect Speed
+(ch+5) sets the FX rate. Each scene occupies a ±9 band around its value. Morph,
 Flame and Sky run on the bulb's firmware via `SetTileEffect`; Flicker, Twinkle
 and Meteor are streamed by the bridge (whole-bulb). Sky scenes
 (Sunrise/Sunset/Clouds) need Candle firmware that supports the SKY effect. The
@@ -165,9 +164,9 @@ python3 lifx_control.py listen
 It prints the fixture map it built, e.g.:
 
 ```
-DMX fixture map (9ch each: R,G,B,Amber,Intensity,Mode,Speed,Strobe,FX):
+DMX fixture map (8ch each: R,G,B,Intensity,Mode,Speed,Strobe,FX):
   U0   addr   1  "Kitchen"               -> 192.168.1.50
-  U0   addr  10  "Living Room"           -> 192.168.1.51
+  U0   addr   9  "Living Room"           -> 192.168.1.51
 
 Art-Net listener on 0.0.0.0:6454  (2 fixture(s) across 1 universe(s))
 Rate limit: 20 updates/s per bulb. Press Ctrl-C to stop.
@@ -192,8 +191,10 @@ changes. Use `--rediscover 30` to re-resolve IPs every 30s while listening.
 1. In QLab, open **Settings -> Light** (or the Light patch) and add a network
    DMX (Art-Net) output pointed at the IP of the machine running this script,
    using the universe(s) shown in the fixture map.
-2. Patch a generic **9-channel** fixture (R, G, B, Amber, Intensity, Mode,
-   Speed, Strobe, FX Scene) at each DMX address the script printed.
+2. Patch a generic **8-channel** fixture (R, G, B, Intensity, Mode, Speed,
+   Strobe, FX Scene) at each DMX address the script printed. Drive raw RGB —
+   don't use an RGBA/RGBW color parameter, which would push an unwanted value
+   onto the Intensity channel.
 3. Use Light cues as normal — the color wheel and fade sliders drive the bulbs.
    QLab streams the fade frame-by-frame; the script rate-limits to `--max-hz`
    (default 20/s per bulb) so Wi-Fi keeps up, and uses a short `--smooth`

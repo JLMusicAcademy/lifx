@@ -561,8 +561,8 @@ def device_info(ip):
 # QLab's Light workspace outputs DMX over Art-Net (UDP port 6454). We listen
 # for those packets and treat each LIFX bulb as an 8-channel fixture:
 #
-#   ch+0 Red   ch+1 Green   ch+2 Blue   ch+3 Amber   ch+4 Intensity
-#   ch+5 Effect/Mode   ch+6 Effect Speed   ch+7 Strobe
+#   ch+0 Red   ch+1 Green   ch+2 Blue   ch+3 Intensity
+#   ch+4 Effect/Mode   ch+5 Effect Speed   ch+6 Strobe   ch+7 FX Scene
 #
 # That lets QLab drive the bulbs with its native color wheel and fade cues,
 # plus the bulbs' own effects (breathe/pulse/strobe run on the bulb firmware;
@@ -575,9 +575,9 @@ ARTNET_PORT = 6454
 OP_POLL = 0x2000
 OP_POLL_REPLY = 0x2100
 OP_DMX = 0x5000
-CHANNELS_PER_FIXTURE = 9  # R,G,B,Amber,Intensity,Mode,Speed,Strobe,FX Scene
+CHANNELS_PER_FIXTURE = 8  # R,G,B,Intensity,Mode,Speed,Strobe,FX Scene
 
-# Effect/Mode channel (ch+5) value ranges -> mode name.
+# Effect/Mode channel (ch+4) value ranges -> mode name.
 EFFECT_RANGES = [
     (10, "static"),       # 0-9    steady color (SetColor)
     (40, "breathe"),      # 10-39  native SINE on brightness
@@ -725,17 +725,13 @@ def native_effect_params(mode, base_hsbk):
     return None
 
 
-def rgba_to_hsbk(r, g, b, a, intensity, kelvin):
-    """Convert DMX RGBA + master intensity (each 0-255) to LIFX HSBK.
+def rgb_to_hsbk(r, g, b, intensity, kelvin):
+    """Convert DMX RGB + master intensity (each 0-255) to LIFX HSBK.
 
-    Amber is folded into the red/green mix (amber ~ hue 45 deg), then we take
-    HSV and scale brightness by the intensity channel (a master dimmer).
+    Hue/saturation come straight from the RGB; brightness is the HSV value
+    scaled by the intensity channel (a master dimmer).
     """
-    af = a / 255.0
-    rf = min(1.0, r / 255.0 + af)
-    gf = min(1.0, g / 255.0 + 0.75 * af)  # amber ~ RGB(255,191,0) -> hue 45 deg
-    bf = b / 255.0
-    h, s, v = colorsys.rgb_to_hsv(rf, gf, bf)
+    h, s, v = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
     return h * 360.0, s * 100.0, v * (intensity / 255.0) * 100.0, kelvin
 
 
@@ -791,7 +787,7 @@ def refresh_ips(fixtures, timeout=2.0):
 
 
 def print_fixture_table(fixtures):
-    print("DMX fixture map (9ch each: R,G,B,Amber,Intensity,Mode,Speed,Strobe,FX):")
+    print("DMX fixture map (8ch each: R,G,B,Intensity,Mode,Speed,Strobe,FX):")
     for f in fixtures:
         name = f.get("label") or "?"
         print(f"  U{f['universe']:<3} addr {f['address']:>3}  {name:24} "
@@ -844,16 +840,16 @@ def build_artpoll_reply(node_ip, universes):
 
 
 def decode_controls(dmx, i, kelvin):
-    """Read a 9-channel fixture starting at index i into a control dict."""
-    r, g, b, a, it = dmx[i], dmx[i + 1], dmx[i + 2], dmx[i + 3], dmx[i + 4]
+    """Read an 8-channel fixture starting at index i into a control dict."""
+    r, g, b, it = dmx[i], dmx[i + 1], dmx[i + 2], dmx[i + 3]
     return {
-        "hsbk": rgba_to_hsbk(r, g, b, a, it, kelvin),
+        "hsbk": rgb_to_hsbk(r, g, b, it, kelvin),
         "intensity": it / 255.0 * 100.0,
         "kelvin": kelvin,
-        "mode": decode_mode(dmx[i + 5]),
-        "speed": dmx[i + 6],
-        "strobe": dmx[i + 7],
-        "fx_scene": decode_fx_scene(dmx[i + 8]),
+        "mode": decode_mode(dmx[i + 4]),
+        "speed": dmx[i + 5],
+        "strobe": dmx[i + 6],
+        "fx_scene": decode_fx_scene(dmx[i + 7]),
     }
 
 

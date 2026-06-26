@@ -67,24 +67,34 @@ class FxSceneDecodeTest(unittest.TestCase):
 
 
 class ChannelWidthTest(unittest.TestCase):
-    def test_nine_channels(self):
-        self.assertEqual(lifx.CHANNELS_PER_FIXTURE, 9)
+    def test_eight_channels(self):
+        self.assertEqual(lifx.CHANNELS_PER_FIXTURE, 8)
 
     def test_decode_controls_reads_fx(self):
-        dmx = [0] * 9
-        dmx[8] = 80                       # ch9 = Spooky band
+        dmx = [0] * 8
+        dmx[7] = 80                       # ch8 = Spooky band
         c = lifx.decode_controls(dmx, 0, 3500)
         self.assertEqual(c["fx_scene"], "spooky")
         self.assertEqual(c["strobe"], 0)
 
-    def test_auto_assign_packs_56_per_universe(self):
+    def test_decode_controls_no_amber(self):
+        # Pure blue with the (now-removed) amber slot at full must stay blue:
+        # channel 4 is Intensity, not Amber, so 255 there = full brightness.
+        dmx = [0, 0, 255, 255, 0, 0, 0, 0]   # R G B Intensity Mode Speed Strobe FX
+        c = lifx.decode_controls(dmx, 0, 3500)
+        h, s, b, k = c["hsbk"]
+        self.assertAlmostEqual(h, 240.0, places=0)   # blue hue
+        self.assertAlmostEqual(s, 100.0, places=0)   # fully saturated (no amber wash)
+        self.assertGreater(b, 0)                     # intensity 255 -> lit
+
+    def test_auto_assign_packs_64_per_universe(self):
         bulbs = [{"label": f"b{i:02d}", "ip": f"10.0.0.{i}", "mac": f"m{i}"}
-                 for i in range(60)]
+                 for i in range(70)]
         fx = lifx.auto_assign(bulbs)
-        # 9 ch each -> 56 fixtures fit (56*9=504); the 57th rolls to universe 1.
-        self.assertEqual(fx[55]["universe"], 0)
-        self.assertEqual(fx[56]["universe"], 1)
-        self.assertEqual(fx[56]["address"], 1)
+        # 8 ch each -> 64 fixtures fit (64*8=512); the 65th rolls to universe 1.
+        self.assertEqual(fx[63]["universe"], 0)
+        self.assertEqual(fx[64]["universe"], 1)
+        self.assertEqual(fx[64]["address"], 1)
 
 
 class DispatchPrecedenceTest(unittest.TestCase):
