@@ -1,7 +1,16 @@
 # Sample systemd unit for the LIFX DMX Bridge web UI on a Raspberry Pi.
-# Install:
+#
+# Easiest install (generates this unit with the correct paths, enables it for
+# boot, and migrates any existing ~/.lifx-bridge config):
+#   sudo ./install.sh
+#
+# Manual install (edit the paths below to match your checkout first):
 #   sudo cp lifx-bridge.service /etc/systemd/system/
 #   sudo systemctl enable --now lifx-bridge
+#
+# A single process (lifx_web.py) runs the web UI AND the Art-Net listener, and
+# auto-starts the listener on boot. Do NOT also run lifx_control.py as a service
+# — two listeners fight for the Art-Net port/universes.
 #
 # Runs as root so the Network tab can change the host IP via nmcli, and so it
 # can bind privileged things if needed. The restart-to-reset password feature

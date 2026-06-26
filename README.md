@@ -247,9 +247,30 @@ a row, each within 60 seconds** of the previous boot, and the password resets to
 `admin` / `admin123`. The window is configurable (`LIFX_RESTART_WINDOW`) and is
 set above one Pi boot cycle so back-to-back reboots register.
 
-Run it as a service with the provided `lifx-bridge.service` (root is needed for
-the Network tab's `nmcli` changes). Config lives in `~/.lifx-bridge/` (or
-`LIFX_BRIDGE_DIR`).
+Run it as a service with the provided installer (root is needed for the Network
+tab's `nmcli` changes):
+
+```sh
+sudo ./install.sh
+```
+
+This installs and enables a systemd service so the bridge **auto-starts on every
+boot — including after a power outage** (a Raspberry Pi powers on by itself when
+power returns). A single process (`lifx_web.py`) serves the web UI **and** runs
+the Art-Net listener, auto-starting the listener on boot once bulbs are patched.
+You do **not** run `lifx_control.py` separately — a second listener would fight
+the first for the Art-Net port and universes. The installer also migrates an
+existing `~/.lifx-bridge` config into the service's data dir so your patch,
+names, and password carry over. Config lives in `LIFX_BRIDGE_DIR` (default
+`/var/lib/lifx-bridge`).
+
+Useful commands:
+
+```sh
+sudo systemctl status lifx-bridge      # is it running?
+sudo systemctl restart lifx-bridge     # apply a code update
+journalctl -u lifx-bridge -f           # live logs
+```
 
 ## Value ranges
 
